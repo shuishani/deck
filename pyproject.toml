@@ -1,0 +1,19 @@
+[project]
+name = "deck"
+version = "0.1.0"
+description = "个人项目与消息中枢：以项目为中心管理群聊、任务和日志"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+deck = "deck.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

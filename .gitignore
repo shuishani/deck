@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# 下载的第三方 CLI，不进仓库
+tools/
+# 前端构建产物，用 cd web && pnpm build 生成
+src/deck/static/
