@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -65,7 +66,14 @@ def test_dingtalk_send_confirms_without_prompt():
     run = FakeRun({"success": True})
     DingTalkAdapter("dws", run).send("cid", "你好")
     assert run.calls[0] == ["dws", "chat", "+send-to-group", "--group", "cid",
-                            "--content", "你好", "--yes", "-f", "json"]
+                            "--content", "你好", "--ai-tag=false", "--yes", "-f", "json"]
+
+
+def test_dingtalk_reply_quotes_and_ai_keeps_the_tag():
+    run = FakeRun({"success": True})
+    DingTalkAdapter("dws", run).send("cid", "收到", reply_to="msg1", ai=True)
+    assert run.calls[0] == ["dws", "chat", "+messages-reply", "--group", "cid", "--message-id",
+                            "msg1", "--content", "收到", "--ai-tag=true", "--yes", "-f", "json"]
 
 
 def _channel_page(*seqs):
@@ -100,3 +108,92 @@ def test_channel_send_reply():
     ChannelAdapter("drlee", run).send("ch", "收到", reply_to="m1")
     assert run.calls[0] == ["drlee", "--json", "channel", "messages", "send", "ch",
                             "--text", "收到", "--reply-to", "m1"]
+
+
+def test_dingtalk_content_strips_placeholders_and_keeps_one_ref_per_image():
+    from deck.content import parse
+    ref = {"download": {"arguments": {"resource-id": "r", "message-id": "m",
+                                      "open-conversation-id": "c", "type": "mediaId"}}}
+    text, [image] = parse("dingtalk", {"resourceRefs": [ref, {**ref, "contentType": "image"}]},
+                          "看下这个 [图片消息](mediaId=@abc)")
+    assert (text, image.kind, image.ref["resource-id"]) == ("看下这个", "image", "r")
+    text, [voice] = parse("dingtalk", {"resourceRefs": [{**ref, "contentType": "audio"}]},
+                          "这是一条测试消息\n[语音消息](mediaId=@xyz)")
+    assert (text, voice.kind, voice.transcript) == ("", "voice", "这是一条测试消息")
+
+
+def test_channel_content_reads_files_and_voice_blocks():
+    from deck.content import parse
+    raw = {"channel_id": "ch", "blocks": [
+        {"type": "voice", "file_id": "v", "duration_ms": 2086, "transcription_status": "processing"}],
+        "files": [{"id": "v", "filename": "voice.m4a", "mime_type": "audio/mp4", "file_size": 3},
+                  {"id": "i", "filename": "a.jpg", "mime_type": "image/jpeg", "width": 7, "height": 8}]}
+    text, [voice, image] = parse("channel", raw, "")
+    assert (voice.kind, voice.duration_ms, voice.transcribing, voice.transcript) == (
+        "voice", 2086, True, None)
+    assert (image.kind, image.width, image.ref) == (
+        "image", 7, {"channel_id": "ch", "file_id": "i", "name": "a.jpg"})
+
+
+def test_dingtalk_download_runs_in_a_scratch_dir_and_moves_the_file(tmp_path):
+    seen = {}
+
+    def run(argv, cwd=None):
+        seen["argv"], seen["cwd"] = argv, cwd
+        (Path(cwd) / "abc.JPG").write_bytes(b"img")
+        return {"success": True}
+
+    adapter = DingTalkAdapter("dws", run=run)
+    path = adapter.download({"resource-id": "r", "message-id": "m", "open-conversation-id": "c",
+                             "type": "mediaId"}, tmp_path / "5-0")
+    assert path == tmp_path / "5-0.jpg" and path.read_bytes() == b"img"
+    assert seen["argv"][seen["argv"].index("--output") + 1] == "."
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_channel_refetch_reads_the_same_message_again():
+    def run(argv):
+        assert argv[-2:] == ["--after-sequence", "6"]
+        return {"data": [{"id": "m1", "created_at": "2026-11-10T06:56:20Z", "text": "",
+                          "message_sequence": 7, "blocks": [{"type": "voice", "transcript": "你好"}]}]}
+
+    fresh = ChannelAdapter("drlee", run=run).refetch("ch", {"id": "m1", "message_sequence": 7})
+    assert fresh.raw["blocks"][0]["transcript"] == "你好"
+
+
+def test_dingtalk_quote_reply_records_the_quoted_message():
+    run = FakeRun({"messages": [{"messageId": "m2", "createTime": "2026-11-10 15:53:56",
+                                 "text": "引用测试", "quotedMessage": {"messageId": "m1", "text": "hi"}}]})
+    [message], _ = DingTalkAdapter("dws", run).fetch("cid", None)
+    assert message.reply_to == "m1"
+
+
+def test_channel_edit_sends_the_revision_and_delete_confirms():
+    run = FakeRun({"ok": True}, {"ok": True})
+    adapter = ChannelAdapter("drlee", run=run)
+    adapter.edit("ch", {"id": "m1", "revision": 3}, "改")
+    adapter.retract("ch", {"id": "m1"})
+    assert run.calls[0][-4:] == ["--if-revision", "3", "--text", "改"]
+    assert run.calls[1][-3:] == ["ch", "m1", "--confirm"]
+
+
+def test_refresh_picks_up_edits_and_deletes_but_not_read_counts(tmp_path):
+    from deck.adapters.base import Conversation, Message
+    from deck.store import Store
+    s = Store(tmp_path / "deck.db")
+    s.add_project("mx", "MX", None)
+    cid = s.add_conversation("mx", Conversation("channel", "ch", "群"))
+    at = datetime(2026, 11, 10, tzinfo=timezone.utc)
+    msg = lambda text, **raw: Message("channel", "m1", "ch", "U", "张三", text, at, raw={"revision": 1, **raw})
+    s.add_messages(cid, [msg("原文", read_count=1)], set())
+    assert s.refresh(cid, [msg("原文", read_count=5)]) == 0
+    assert s.refresh(cid, [msg("", deleted_at="2026-11-10T08:00:00Z")]) == 1
+    s.close()
+
+
+def test_channel_can_send_with_a_separate_drlee():
+    run = FakeRun({"ok": True}, {"ok": True})
+    adapter = ChannelAdapter("drlee", run=run, sender="drlee-old")
+    adapter.send("ch", "你好")
+    adapter.send("ch", "【MX 助手】你好", ai=True)
+    assert [call[0] for call in run.calls] == ["drlee-old", "drlee"]

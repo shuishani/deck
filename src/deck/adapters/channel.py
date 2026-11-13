@@ -1,4 +1,9 @@
+import os
+import shutil
+import tempfile
+import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 from ..runner import Runner, ToolError, run_json
 from .base import Conversation, Message
@@ -12,8 +17,11 @@ class ChannelAdapter:
 
     source = "channel"
 
-    def __init__(self, drlee: str, run: Runner = run_json):
+    def __init__(self, drlee: str, run: Runner = run_json, sender: str | None = None):
         self._drlee = drlee
+        # 平时发消息可以单独指定一个 drlee：新版会被 channel 标成「拍档 / AI 代发」，
+        # 以 AI 身份发时仍用新版，让这个标记只出现在 AI 发的消息上。
+        self._sender = sender or drlee
         self._run = run
 
     def resolve(self, query: str) -> Conversation:
@@ -24,7 +32,7 @@ class ChannelAdapter:
             if query in (channel.get("id"), channel.get("name"))
         ]
         if len(hits) != 1:
-            raise ToolError(f"channel 里没有唯一叫「{query}」的频道（找到 {len(hits)} 个）")
+            raise ToolError(f"channel 中未找到唯一名为「{query}」的频道（匹配 {len(hits)} 个）")
         return Conversation(self.source, hits[0]["id"], hits[0].get("name", ""))
 
     def fetch(
@@ -46,16 +54,74 @@ class ChannelAdapter:
                 break
         return messages, after
 
-    def send(self, conversation: str, text: str, reply_to: str | None = None) -> None:
-        argv = [self._drlee, "--json", "channel", "messages", "send", conversation]
+    def send(self, conversation: str, text: str, reply_to: str | None = None,
+             ai: bool = False) -> None:
+        argv = [self._drlee if ai else self._sender, "--json", "channel", "messages", "send", conversation]
         argv += ["--text", text]
         if reply_to:
             argv += ["--reply-to", reply_to]
         self._run(argv)
 
+    def send_attachments(self, conversation: str, text: str, reply_to: str | None,
+                         ai: bool, items: list[dict]) -> None:
+        if len(items) != 1:
+            raise ValueError("channel 每次只能发送 1 个附件")
+        # drlee 的 --attach 会先上传本地文件再发消息，一次调用完成。
+        argv = [self._drlee if ai else self._sender, "--json", "channel", "messages", "send", conversation]
+        if text:
+            argv += ["--text", text]
+        if reply_to:
+            argv += ["--reply-to", reply_to]
+        with tempfile.TemporaryDirectory(prefix=".deck-attach-") as work:
+            name = Path(items[0]["name"]).name
+            path = Path(work) / name
+            shutil.copyfile(items[0]["path"], path)
+            path.chmod(0o600)
+            self._run(argv + ["--attach", str(path)], cwd=work)
+
     def self_ids(self, conversation: str) -> set[str]:
         profile = self._run([self._drlee, "--json", "profile", "show"])["data"]
         return {profile["id"]}
+
+    def download(self, ref: dict, stem: Path) -> Path:
+        suffix = Path(ref.get("name") or "").suffix.lower()
+        temp = stem.parent / f".download-{uuid.uuid4().hex}{suffix}"
+        try:
+            self._run([self._drlee, "--json", "channel", "files", "download",
+                       "--output", str(temp), ref["channel_id"], ref["file_id"]])
+            final = stem.with_suffix(suffix)
+            os.replace(temp, final)
+            return final
+        except KeyError as error:
+            raise ToolError("channel 附件缺少下载参数") from error
+        finally:
+            temp.unlink(missing_ok=True)
+
+    def edit(self, conversation: str, raw: dict, text: str) -> None:
+        # 带上当前版本号：别处先改过就会被拒，避免覆盖。
+        self._run([self._drlee, "--json", "channel", "messages", "edit", conversation, raw["id"],
+                   "--if-revision", str(raw.get("revision") or 1), "--text", text])
+
+    def retract(self, conversation: str, raw: dict) -> None:
+        self._run([self._drlee, "--json", "channel", "messages", "delete", conversation, raw["id"],
+                   "--confirm"])
+
+    def recent(self, conversation: str) -> list[Message]:
+        """最近一页，用来发现在 App 里被编辑、撤回的消息。"""
+        page = _items(self._run([self._drlee, "--json", "channel", "messages", "list", conversation,
+                                 "--limit", str(_PAGE)])["data"])
+        return [self._message(conversation, item) for item in page]
+
+    def refetch(self, conversation: str, raw: dict) -> Message | None:
+        """重读一条消息（语音转写完成后内容会更新）。"""
+        sequence = raw.get("message_sequence")
+        if not isinstance(sequence, int):
+            return None
+        page = _items(self._run(
+            [self._drlee, "--json", "channel", "messages", "list", conversation,
+             "--limit", "1", "--after-sequence", str(sequence - 1)])["data"])
+        item = next((item for item in page if item.get("id") == raw.get("id")), None)
+        return self._message(conversation, item) if item else None
 
     def _message(self, conversation: str, item: dict) -> Message:
         return Message(

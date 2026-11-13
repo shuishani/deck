@@ -1,11 +1,12 @@
 import subprocess
+import sys
 import threading
 import time
 from collections import deque
 from collections.abc import Callable
 
 from .adapters import adapter_for as default_adapter_for
-from .config import Config
+from .config import Config, current
 from .store import Store
 from .sync import sync
 
@@ -27,6 +28,8 @@ class Watcher:
         self._sync_one = sync_one or self._default_sync
         self._popen = popen
         self._stop = threading.Event()
+        # 停止或设置变化（如暂停平台）时叫醒主循环，不必等到下一轮轮询。
+        self._wake = threading.Event()
         self._listeners: dict[int, _Listener] = {}
         self._locks: dict[int, threading.Lock] = {}
         self._guard = threading.Lock()
@@ -38,10 +41,14 @@ class Watcher:
 
     def stop(self) -> None:
         self._stop.set()
+        self._wake.set()
         for listener in list(self._listeners.values()):
             listener.stop()
         if self._thread:
             self._thread.join(timeout=15)
+
+    def wake(self) -> None:
+        self._wake.set()
 
     def run_forever(self) -> None:
         self.start()
@@ -67,7 +74,7 @@ class Watcher:
             self._sync_one(id)
 
     def _default_sync(self, id: int) -> None:
-        store = Store(self.config.db_path)
+        store = Store(self.config.db_path, via="watcher")
         try:
             sync(store, lambda source: default_adapter_for(source, self.config), conversation=id)
         finally:
@@ -76,9 +83,15 @@ class Watcher:
     def _loop(self) -> None:
         last_dingtalk_poll = float("-inf")
         while not self._stop.is_set():
-            store = Store(self.config.db_path)
+            store = Store(self.config.db_path, via="watcher")
             try:
-                rows = store.conversations()
+                try:
+                    self.config = current(self.config, store.setting("runtime_config"))
+                except (ValueError, TypeError, KeyError) as error:
+                    # 设置损坏时沿用上一份配置继续监听，不让线程退出。
+                    print(f"deck: 运行设置无效，沿用当前配置：{error}", file=sys.stderr)
+                paused = store.paused_sources()
+                rows = [row for row in store.conversations() if row["source"] not in paused]
             finally:
                 store.close()
             self._reconcile(rows)
@@ -92,7 +105,8 @@ class Watcher:
                     self.sync_conversation(row["id"])
             if dingtalk_due:
                 last_dingtalk_poll = now
-            self._stop.wait(self.config.poll_seconds)
+            self._wake.wait(self.config.poll_seconds)
+            self._wake.clear()
 
     def _reconcile(self, rows) -> None:
         wanted = {row["id"]: row for row in rows if row["source"] == "dingtalk"}
@@ -123,7 +137,12 @@ class _Listener:
         self._stop.set()
         proc = self._proc
         if proc and proc.poll() is None:
-            # 让 dws 正常退出、取消订阅，不用 kill -9。
+            # 让 dws 正常退出、取消订阅，不用 kill -9：先关 stdin（dws 视为退出信号），再发 SIGTERM。
+            if getattr(proc, "stdin", None):
+                try:
+                    proc.stdin.close()
+                except OSError:
+                    pass
             proc.terminate()
             try:
                 proc.wait(timeout=10)
@@ -173,6 +192,8 @@ class _Listener:
             self.error = f"监听断开（退出码 {proc.returncode}）：{' / '.join(tail) or '无输出'}"
 
     def _popen_dws(self) -> subprocess.Popen:
+        # stdin 一直开着：dws 读到 stdin 结束就会退出，后台运行（nohup、launchd）时 stdin 是空的。
         return self._watcher._popen(
-            self._argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1
+            self._argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, bufsize=1,
         )

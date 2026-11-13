@@ -12,6 +12,10 @@ deck = "deck.cli:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# 前端产物在 .gitignore 里，默认不进包；后台服务装的是包，必须带上。
+[tool.hatch.build.targets.wheel]
+artifacts = ["src/deck/static"]
+
 [dependency-groups]
 dev = ["pytest>=8"]
 

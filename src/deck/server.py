@@ -2,45 +2,37 @@ import fnmatch
 import json
 import mimetypes
 import re
+import socket
 import sqlite3
 import ssl
-from datetime import datetime
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
-from . import access, actions
-from .adapters import SOURCES, adapter_for
-from .awaiting import awaiting
+from . import access, ai, api, media
+from . import config as config_module
+from .api import ApiError
 from .config import Config
+from .health import SourceHealth
 from .runner import ToolError
 from .store import Store
-from .sync import sync
 from .watcher import Watcher
 
 STATIC = Path(__file__).parent / "static"
 mimetypes.add_type("application/manifest+json", ".webmanifest")
 mimetypes.add_type("image/svg+xml", ".svg")
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
-# 不登录也能用的接口：查登录状态、用登录码登录。
-_OPEN = {("GET", "/api/auth"), ("POST", "/api/session")}
-
-
-class ApiError(Exception):
-    def __init__(self, status: int, message: str, **extra):
-        super().__init__(message)
-        self.status = status
-        self.extra = extra
 
 
 def make_server(config: Config, watcher: Watcher | None) -> ThreadingHTTPServer:
     settings = config.server
     handler = type("Handler", (_Handler,), {
-        "config": config, "watcher": watcher, "limiter": access.FailureLimiter(),
+        "config": config, "watcher": watcher, "limiter": access.FailureLimiter(), "health": SourceHealth(),
         "tls": bool(settings.tls_cert and settings.tls_key),
     })
+    _ensure_port_free(settings.host, settings.port)
     server = ThreadingHTTPServer((settings.host, settings.port), handler)
     server.daemon_threads = True
     if handler.tls:
@@ -50,44 +42,19 @@ def make_server(config: Config, watcher: Watcher | None) -> ThreadingHTTPServer:
     return server
 
 
-def addresses(config: Config) -> list[dict]:
-    """能打开看板的地址，带一句状态；recommended 是二维码该用的那个。
-
-    Tailscale 在外面和同一 Wi-Fi 下都通，但手机上的 Tailscale 没连时打不开，
-    这时退到局域网。本机放最后。
-    """
-    settings = config.server
-    tls = bool(settings.tls_cert and settings.tls_key)
-    scheme = "https" if tls else "http"
-    order = {"tailscale": 0, "relay": 1, "lan": 2, "other": 3, "local": 4}
-    result = [{"kind": "relay", "label": "中继", "url": url if url.endswith("/") else url + "/",
-               "secure": url.startswith("https://"), "status": "从任何网络都能打开",
-               "usable": True} for url in settings.public_urls]
-    if settings.host not in LOOPBACK:
-        tailscale = access.tailscale_status()
-        for ip, iface in access.local_interfaces():
-            kind, label, encrypted = access.describe(ip, iface)
-            entry = {"kind": kind, "label": label, "url": f"{scheme}://{ip}:{settings.port}/",
-                     "secure": tls or encrypted, "usable": True, "status": ""}
-            if kind == "tailscale":
-                online = (tailscale or {}).get("phones_online") or []
-                entry["usable"] = bool(online)
-                entry["status"] = (f"{'、'.join(online)} 在线" if online
-                                   else "手机上的 Tailscale 没连接")
-            elif kind == "lan":
-                entry["status"] = "同一 Wi-Fi 下可用"
-            else:
-                entry["status"] = "其他网卡（如公司 VPN）"
-            result.append(entry)
-    result.append({"kind": "local", "label": "本机", "url": f"{scheme}://127.0.0.1:{settings.port}/",
-                   "secure": True, "usable": True, "status": "只在这台电脑上"})
-    result.sort(key=lambda a: order[a["kind"]])
-    remote = [a for a in result if a["kind"] != "local"]
-    best = next((a for a in remote if a["usable"] and a["kind"] in ("tailscale", "relay")), None)
-    best = best or next((a for a in remote if a["kind"] == "lan"), None) or (remote or result)[0]
-    for entry in result:
-        entry["recommended"] = entry is best
-    return result
+def _ensure_port_free(host: str, port: int) -> None:
+    """macOS 上开了地址复用的套接字能叠在别人的 0.0.0.0 上绑定更具体的地址并抢走流量，绑定前先试连一下。
+    不关地址复用：关掉后刚重启时会被 TIME_WAIT 连接挡住。"""
+    if not port:
+        return
+    # 只试连本机回环：VPN / 代理的虚拟网卡（如 utun）会接受任何连接，试连网卡地址会误判为被占用。
+    target = "127.0.0.1" if host in ("", "0.0.0.0", "::") else host
+    try:
+        with socket.create_connection((target, port), timeout=0.3):
+            pass
+    except OSError:
+        return
+    raise ValueError(f"端口 {port} 已被占用（{target}:{port} 上已有服务在监听），请先停止它或换端口")
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -114,192 +81,80 @@ class _Handler(BaseHTTPRequestHandler):
         if not self._host_allowed():
             host = self._hostname()
             return self._json(HTTPStatus.FORBIDDEN, {
-                "error": f"不认识的访问地址 {host}；如果是你的中继域名，把它加进"
+                "error": f"未授权的访问地址 {host}；如为中继域名，请将其加入"
                          " ~/.deck/config.toml 的 [server] allowed_hosts"})
         url = urlparse(self.path)
         # 中继可能把看板挂在子路径下（/deck/api/...），按最后的 /api/ 切出接口路径。
         at = url.path.rfind("/api/")
         if at < 0:
             if self.command != "GET":
-                return self._json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "不支持"})
+                return self._json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "不支持该请求方法"})
             return self._static(url.path)
         path = url.path[at:]
         # 改数据的请求要自定义头：别的网页没法跨站带上它。
         if self.command != "GET" and self.headers.get("X-Deck") != "1":
             return self._json(HTTPStatus.FORBIDDEN, {"error": "缺少 X-Deck 请求头"})
-        store = Store(self.config.db_path)
+        found = api.resolve(self.command, path)
+        store = Store(self.config.db_path, via="web")
         try:
-            self._session = access.session_for(store, self._cookie(), self._client_ip())
-            if (self.command, path) not in _OPEN and not self._session:
+            self.config = config_module.with_entry(
+                config_module.current(self.config, store.setting("runtime_config")), store.setting("access_entry"))
+            session = access.session_for(store, self._cookie(), self.client_ip())
+            if not session and not (found and found[0].open):
                 raise ApiError(HTTPStatus.UNAUTHORIZED, "需要登录", auth=True)
-            status, body = HTTPStatus.OK, self._route(store, path, parse_qs(url.query))
+            if not found:
+                raise ApiError(HTTPStatus.NOT_FOUND, "接口不存在")
+            item, params = found
+            query = {k: v[-1] for k, v in parse_qs(url.query).items()}
+            body = {} if self.command == "GET" or item.raw_body else self._body()
+            ctx = api.Context(store=store, config=self.config, watcher=self.watcher,
+                              health=self.health, session=session, http=self, cookies=self._cookies)
+            status, body = HTTPStatus.OK, item.handler(ctx, {**query, **body, **params})
         except ApiError as error:
             status, body = error.status, {"error": str(error), **error.extra}
+        except LookupError as error:
+            status, body = HTTPStatus.NOT_FOUND, {"error": str(error)}
+        except ai.ModelError as error:
+            status, body = HTTPStatus.BAD_GATEWAY, {"error": str(error)}
         except (ValueError, ToolError) as error:
             status, body = HTTPStatus.BAD_REQUEST, {"error": str(error)}
         except sqlite3.IntegrityError:
-            status, body = HTTPStatus.CONFLICT, {"error": "已经存在，不能重复添加"}
+            status, body = HTTPStatus.CONFLICT, {"error": "记录已存在，不能重复添加"}
         finally:
             store.close()
+        if isinstance(body, media.Media):
+            return self._file(body)
         self._json(status, body)
 
-    def _route(self, store: Store, path: str, query: dict) -> dict:
-        method = self.command
-        q = {k: v[-1] for k, v in query.items()}
-        if (method, path) == ("GET", "/api/auth"):
-            return {"authenticated": bool(self._session)}
-        if (method, path) == ("POST", "/api/session"):
-            return self._login(store, self._body())
-        if (method, path) == ("DELETE", "/api/session"):
-            access.revoke(store, self._session["id"])
-            self._cookies.append(self._session_cookie("", max_age=0))
-            return {"ok": True}
-        if (method, path) == ("GET", "/api/access"):
-            return {
-                "sessions": [{**dict(r), "current": r["id"] == self._session["id"]}
-                             for r in access.sessions(store)],
-                "addresses": addresses(self.config),
-                "tls": self.tls,
-            }
-        if method == "DELETE" and (m := re.fullmatch(r"/api/sessions/(\d+)", path)):
-            if not access.revoke(store, int(m[1])):
-                raise ApiError(HTTPStatus.NOT_FOUND, "没有这个设备")
-            if int(m[1]) == self._session["id"]:
-                self._cookies.append(self._session_cookie("", max_age=0))
-            return {"ok": True}
-        if method == "POST" and (m := re.fullmatch(r"/api/sessions/(\d+)/(disable|enable)", path)):
-            id, disable = int(m[1]), m[2] == "disable"
-            if disable and id == self._session["id"]:
-                raise ValueError("不能禁用正在用的这台设备；要离开请用「退出登录」")
-            if not access.set_disabled(store, id, disable):
-                raise ApiError(HTTPStatus.NOT_FOUND, "没有这个设备")
-            return {"ok": True}
-        if (method, path) == ("POST", "/api/pairings"):
-            code, expires = access.create_pairing(store)
-            store.audit("me", "access.pairing", self._client_ip(), {}, "ok")
-            return {"code": code, "expires_at": expires.isoformat(timespec="seconds")}
-        if (method, path) == ("GET", "/api/version"):
-            return {"version": store.version()}
-        if (method, path) == ("GET", "/api/config"):
-            c = self.config
-            return {"ai_prefix": c.ai_prefix, "retention_days": c.retention_days,
-                    "reply_reminder_hours": c.reply_reminder_hours, "sources": list(SOURCES)}
-        if (method, path) == ("GET", "/api/overview"):
-            return self._overview(store)
-        if (method, path) == ("GET", "/api/timeline"):
-            return self._timeline(store, q)
-        if (method, path) == ("GET", "/api/awaiting"):
-            # 等得最久的在前。
-            return {"messages": [
-                {**_message(a.message, awaiting=True), "waiting_minutes": a.waiting_minutes,
-                 "overdue": a.overdue}
-                for a in awaiting(store, self.config, q.get("project") or None)
-            ]}
-        if (method, path) == ("GET", "/api/projects"):
-            return {"projects": [_project(r) for r in store.projects()]}
-        if (method, path) == ("POST", "/api/projects"):
-            body = self._body()
-            actions.add_project(store, str(body.get("key", "")), str(body.get("name", "")),
-                                body.get("repo"))
-            return {"key": body["key"]}
-        if (method, path) == ("GET", "/api/groups"):
-            return {"groups": [self._group(r) for r in store.conversations()]}
-        if (method, path) == ("POST", "/api/groups"):
-            body = self._body()
-            row = actions.add_group(store, self._adapter_for, str(body.get("project", "")),
-                                    str(body.get("source", "")), str(body.get("query", "")))
-            return {"id": row["id"], "name": row["name"]}
-        if method == "DELETE" and (m := re.fullmatch(r"/api/groups/(\d+)", path)):
-            actions.remove_group(store, int(m[1]))
-            return {"ok": True}
-        if (method, path) == ("POST", "/api/sync"):
-            body = self._body()
-            results = sync(store, self._adapter_for, body.get("project") or None)
-            return {"results": [{"id": r.conversation["id"], "name": r.conversation["name"],
-                                 "added": r.added, "error": r.error} for r in results]}
-        if (method, path) == ("POST", "/api/send"):
-            return self._send(store, self._body())
-        if (method, path) == ("GET", "/api/log"):
-            return {"entries": [dict(r) for r in store.audit_log(_int(q.get("limit"), 100))]}
-        raise ApiError(HTTPStatus.NOT_FOUND, "没有这个接口")
-
-    def _overview(self, store: Store) -> dict:
-        midnight = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
-        stats = store.group_stats(midnight)
-        waiting: dict[int, int] = {}
-        for item in awaiting(store, self.config):
-            waiting[item.message["conversation"]] = waiting.get(item.message["conversation"], 0) + 1
-        projects = []
-        for project in store.projects():
-            groups = []
-            for row in store.conversations(project["key"]):
-                stat = stats.get(row["id"], {})
-                last = stat.get("last_message")
-                groups.append({
-                    **self._group(row),
-                    "today_count": stat.get("today_count", 0),
-                    "awaiting_count": waiting.get(row["id"], 0),
-                    "last_message": last and {
-                        "sender_name": last["sender_name"], "is_me": bool(last["is_me"]),
-                        "text": last["text"], "sent_at": last["sent_at"]},
-                })
-            projects.append({**_project(project), "groups": groups,
-                             "awaiting_count": sum(g["awaiting_count"] for g in groups)})
-        return {"projects": projects}
-
-    def _timeline(self, store: Store, q: dict) -> dict:
-        limit = min(_int(q.get("limit"), 50), 200)
-        rows = store.timeline(
-            project=q.get("project") or None,
-            conversation=_int(q.get("group"), None),
-            mine=q.get("mine") in ("1", "true"),
-            limit=limit + 1,
-            before=_int(q.get("before"), None),
-        )
-        has_more = len(rows) > limit
-        rows = rows[1:] if has_more else rows
-        ids = {a.message["id"] for a in awaiting(store, self.config, q.get("project") or None)}
-        return {"messages": [_message(r, r["id"] in ids) for r in rows], "has_more": has_more}
-
-    def _send(self, store: Store, body: dict) -> dict:
-        group = _int(body.get("group"), None)
-        if group is None:
-            raise ValueError("缺少 group")
-        text, reply_to, ai = str(body.get("text", "")), body.get("reply_to") or None, bool(body.get("ai"))
-        if not body.get("confirm"):
-            _, plan = actions.plan_send(store, self.config, group, text, reply_to, ai)
-            return {"preview": plan}
-        actions.send(store, self.config, self._adapter_for, group, text, reply_to, ai)
-        return {"sent": True}
-
-    def _group(self, row) -> dict:
-        mode, listen_error = self.watcher.status(row["id"]) if self.watcher else ("poll", None)
-        return {
-            "id": row["id"], "project": row["project"], "source": row["source"],
-            "name": row["name"], "remote_id": row["remote_id"], "added_at": row["added_at"],
-            "watch": {"mode": mode, "last_sync_at": row["last_sync_at"],
-                      "error": row["last_error"] or listen_error},
-        }
-
-    def _adapter_for(self, source: str):
-        return adapter_for(source, self.config)
+    def read_upload(self, max_bytes: int) -> bytes:
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            raise ValueError("附件长度无效") from None
+        if not 0 < length <= max_bytes:
+            raise ValueError("附件为空或超过 10 MiB")
+        previous_timeout = self.connection.gettimeout()
+        try:
+            self.connection.settimeout(30)
+            data = self.rfile.read(length)
+        except TimeoutError:
+            raise ApiError(HTTPStatus.REQUEST_TIMEOUT, "附件上传超时，请重新选择文件后重试") from None
+        finally:
+            self.connection.settimeout(previous_timeout)
+        if len(data) != length:
+            raise ValueError("附件上传不完整，请重新上传")
+        return data
 
     # --- 登录 ---
 
-    def _login(self, store: Store, body: dict) -> dict:
-        ip = self._client_ip()
-        if self.limiter.blocked(ip):
-            raise ApiError(HTTPStatus.TOO_MANY_REQUESTS, "尝试太多次，请 10 分钟后再试")
-        token = access.redeem(store, str(body.get("code", "")),
-                              self.headers.get("User-Agent", ""), ip)
-        if not token:
-            self.limiter.fail(ip)
-            raise ApiError(HTTPStatus.UNAUTHORIZED, "登录码无效或已过期")
-        self._cookies.append(self._session_cookie(token, max_age=int(access.SESSION_TTL.total_seconds())))
-        return {"ok": True}
+    @property
+    def _cookie_name(self) -> str:
+        # 浏览器的 Cookie 不分端口：同一台机器上另起的 deck（测试看板等）若同名，会顶掉正式看板的登录。
+        port = self.config.server.port
+        return access.COOKIE if port == 8765 else f"{access.COOKIE}_{port}"
 
-    def _session_cookie(self, value: str, max_age: int) -> str:
-        cookie = f"{access.COOKIE}={value}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Strict"
+    def session_cookie(self, value: str, max_age: int) -> str:
+        cookie = f"{self._cookie_name}={value}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Strict"
         return cookie + "; Secure" if self._https() else cookie
 
     def _cookie(self) -> str | None:
@@ -308,7 +163,7 @@ class _Handler(BaseHTTPRequestHandler):
             jar.load(self.headers.get("Cookie", ""))
         except Exception:  # noqa: BLE001 - 坏的 Cookie 头当作没登录
             return None
-        morsel = jar.get(access.COOKIE)
+        morsel = jar.get(self._cookie_name)
         return morsel.value if morsel else None
 
     def _https(self) -> bool:
@@ -317,7 +172,22 @@ class _Handler(BaseHTTPRequestHandler):
         return (self.config.server.trust_proxy
                 and self.headers.get("X-Forwarded-Proto", "").split(",")[0].strip() == "https")
 
-    def _client_ip(self) -> str:
+    def origin(self) -> str:
+        host = self.headers.get("X-Forwarded-Host") if self.config.server.trust_proxy else None
+        host = (host or "").split(",")[0].strip() or self.headers.get("Host", "")
+        return f"{'https' if self._https() else 'http'}://{host}"
+
+    def is_local(self) -> bool:
+        """本机直连：回环来源、回环 Host、没经过代理。中继和 tailscale serve 转发进来的请求
+        也来自 127.0.0.1，但会带转发头或别的 Host，不算本机。"""
+        if self.client_address[0] not in ("127.0.0.1", "::1"):
+            return False
+        if self._hostname().lower() not in LOOPBACK:
+            return False
+        return not any(self.headers.get(name) for name in
+                       ("X-Forwarded-For", "X-Forwarded-Host", "X-Real-IP", "Forwarded"))
+
+    def client_ip(self) -> str:
         if self.config.server.trust_proxy and (forwarded := self.headers.get("X-Forwarded-For")):
             return forwarded.split(",")[0].strip()
         return self.client_address[0]
@@ -350,7 +220,7 @@ class _Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError as error:
             raise ValueError("请求体不是 JSON") from error
         if not isinstance(body, dict):
-            raise ValueError("请求体要是 JSON 对象")
+            raise ValueError("请求体须为 JSON 对象")
         return body
 
     def _json(self, status: int, body: dict) -> None:
@@ -374,7 +244,7 @@ class _Handler(BaseHTTPRequestHandler):
             file = root / "index.html"
         if not file.is_file():
             return self._text(HTTPStatus.NOT_FOUND,
-                              "前端还没构建：cd web && pnpm install && pnpm build")
+                              "前端尚未构建，请运行：cd web && pnpm install && pnpm build")
         data = file.read_bytes()
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", mimetypes.guess_type(file.name)[0] or "application/octet-stream")
@@ -387,6 +257,39 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _file(self, item: media.Media) -> None:
+        size = item.path.stat().st_size
+        start, end = 0, size - 1
+        ranged = re.fullmatch(r"bytes=(\d*)-(\d*)", self.headers.get("Range", "").strip())
+        if ranged and (ranged[1] or ranged[2]):
+            # Safari 播放音视频必须支持按字节范围读取。
+            if ranged[1]:
+                start, end = int(ranged[1]), min(int(ranged[2] or end), end)
+            else:
+                start = max(size - int(ranged[2]), 0)
+            if start > end:
+                self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.end_headers()
+                return
+        with item.path.open("rb") as file:
+            file.seek(start)
+            data = file.read(end - start + 1)
+        self.send_response(HTTPStatus.PARTIAL_CONTENT if ranged and (ranged[1] or ranged[2])
+                           else HTTPStatus.OK)
+        self.send_header("Content-Type", item.mime if item.inline else "application/octet-stream")
+        self.send_header("Content-Length", str(len(data)))
+        if ranged and (ranged[1] or ranged[2]):
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.send_header("Accept-Ranges", "bytes")
+        disposition = "inline" if item.inline else "attachment"
+        self.send_header("Content-Disposition", f"{disposition}; filename*=UTF-8''{quote(item.name)}")
+        self.send_header("Cache-Control", "private, max-age=86400")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+        self.end_headers()
+        self.wfile.write(data)
+
     def _text(self, status: int, text: str) -> None:
         data = text.encode()
         self.send_response(status)
@@ -394,23 +297,3 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
-
-
-def _project(row) -> dict:
-    return {"key": row["key"], "name": row["name"], "repo": row["repo"]}
-
-
-def _message(row, awaiting: bool) -> dict:
-    return {
-        "id": row["id"], "group_id": row["conversation"], "group_name": row["conversation_name"],
-        "source": row["source"], "sender_name": row["sender_name"], "is_me": bool(row["is_me"]),
-        "text": row["text"], "sent_at": row["sent_at"], "reply_to": row["reply_to"],
-        "remote_id": row["remote_id"], "awaiting": awaiting,
-    }
-
-
-def _int(value, default):
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default

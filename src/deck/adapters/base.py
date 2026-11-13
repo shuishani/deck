@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Protocol
 
 
@@ -38,8 +39,32 @@ class Adapter(Protocol):
         """读 cursor 之后的消息（cursor 为 None 时读最近一页），返回消息和新 cursor。"""
         ...
 
-    def send(self, conversation: str, text: str, reply_to: str | None = None) -> None: ...
+    def send(self, conversation: str, text: str, reply_to: str | None = None,
+             ai: bool = False) -> None:
+        """发到群里；reply_to 是被回复消息的原始 id，ai 表示以 AI 身份发送。"""
+        ...
+
+    def send_attachments(self, conversation: str, text: str, reply_to: str | None,
+                         ai: bool, items: list[dict]) -> None:
+        """带附件发送；items 含本机 path/name/kind。平台做不到的组合报 ValueError，不降级。"""
+        ...
 
     def self_ids(self, conversation: str) -> set[str]:
         """我在这个数据源里的发送人 id，用来标出哪些是我发的。"""
+        ...
+
+    def edit(self, conversation: str, raw: dict, text: str) -> None:
+        """修改我发的一条消息；raw 是这条消息的原始数据。"""
+        ...
+
+    def retract(self, conversation: str, raw: dict) -> None:
+        """撤回我发的一条消息，群里所有人都看不到。"""
+        ...
+
+    def refetch(self, conversation: str, raw: dict) -> Message | None:
+        """重读一条消息，拿到编辑后的内容；读不到返回 None。"""
+        ...
+
+    def download(self, ref: dict, stem: Path) -> Path:
+        """把附件下载到 stem 加上原扩展名的位置，返回最终路径。"""
         ...
