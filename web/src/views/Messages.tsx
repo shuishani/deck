@@ -20,6 +20,7 @@ type Mode = 'groups' | AttentionReason
 
 export function Messages({ group, anchor }: { group?: number; anchor?: number }) {
   const { openSearch, openAskAi } = useActions()
+  const aiReady = !!useData().config?.ai_ready
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <MessagesPane
@@ -32,9 +33,11 @@ export function Messages({ group, anchor }: { group?: number; anchor?: number })
             <button onClick={openSearch} className={clsx(iconButton, 'md:hidden')} aria-label="搜索">
               <Search className="size-4" />
             </button>
-            <button onClick={openAskAi} className={iconButton} title="问 AI" aria-label="问 AI">
-              <Sparkles className="size-4" />
-            </button>
+            {aiReady && (
+              <button onClick={openAskAi} className={iconButton} title="问 AI" aria-label="问 AI">
+                <Sparkles className="size-4" />
+              </button>
+            )}
             <SyncButton icon />
           </div>
         }

@@ -2,7 +2,7 @@ import clsx from 'clsx'
 import { ChevronLeft, RefreshCw, Search, Sparkles } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { api } from '../api'
-import { useActions } from '../state'
+import { useActions, useData } from '../state'
 import { useToast } from './Toast'
 import { Button } from './ui'
 
@@ -62,6 +62,7 @@ export function PageHeader({
   children?: ReactNode
 }) {
   const { openSearch, openAskAi } = useActions()
+  const aiReady = !!useData().config?.ai_ready
   return (
     <header className="shrink-0 border-b border-stone-200 bg-stone-50/90 backdrop-blur dark:border-stone-800 dark:bg-stone-950/90">
       <div className="flex min-h-14 items-center gap-3 px-4 py-2 md:px-6">
@@ -83,13 +84,17 @@ export function PageHeader({
             <Search className="size-4" />
           </button>
           {actions}
-          <Button onClick={openAskAi} title="问 AI" className="max-md:hidden">
-            <Sparkles className="size-3.5" />
-            问 AI
-          </Button>
-          <button onClick={openAskAi} className={clsx(iconButton, 'md:hidden')} aria-label="问 AI">
-            <Sparkles className="size-4" />
-          </button>
+          {aiReady && (
+            <>
+              <Button onClick={openAskAi} title="问 AI" className="max-md:hidden">
+                <Sparkles className="size-3.5" />
+                问 AI
+              </Button>
+              <button onClick={openAskAi} className={clsx(iconButton, 'md:hidden')} aria-label="问 AI">
+                <Sparkles className="size-4" />
+              </button>
+            </>
+          )}
           <span className="max-md:hidden">
             <SyncButton project={syncProject} compact />
           </span>

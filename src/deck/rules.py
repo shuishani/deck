@@ -15,8 +15,8 @@ def validate(data: dict) -> dict:
     if set(data) - set(DEFAULT):
         raise ValueError("未知的提醒规则字段")
     result = {**DEFAULT, **data}
-    if result["scope"] not in ("all", "mentions", "keywords"):
-        raise ValueError("提醒范围须为 all / mentions / keywords")
+    if result["scope"] not in ("all", "mentions", "keywords", "off"):
+        raise ValueError("提醒范围须为 all / mentions / keywords / off")
     words = result["keywords"]
     if not isinstance(words, list) or len(words) > 100 or any(
         not isinstance(w, str) or not w.strip() or len(w) > 100 for w in words
@@ -28,9 +28,9 @@ def validate(data: dict) -> dict:
     for key in ("quiet_start", "quiet_end"):
         value = result[key]
         if value is not None and (not isinstance(value, str) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value)):
-            raise ValueError("免打扰时间须为 HH:MM")
+            raise ValueError("安静时段须为 HH:MM")
     if (result["quiet_start"] is None) != (result["quiet_end"] is None):
-        raise ValueError("免打扰的开始和结束时间须同时填写")
+        raise ValueError("安静时段的开始和结束时间须同时填写")
     return result
 
 

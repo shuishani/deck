@@ -396,7 +396,7 @@ function SettingsTab({ project }: { project: OverviewProject }) {
                   <button
                     onClick={() => setGroupSettings(group)}
                     className="flex min-w-0 flex-1 items-center gap-3 py-3 pl-4 text-left hover:bg-stone-50 dark:hover:bg-stone-800/40"
-                    title="群设置：提醒范围、免打扰、所属项目"
+                    title="群设置：监听、AI 分析、提醒范围、所属项目"
                   >
                     <SourceBadge source={group.source} className="!size-8 !rounded-lg" />
                     <span className="min-w-0 flex-1">

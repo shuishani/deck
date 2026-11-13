@@ -10,7 +10,7 @@ from . import migrations
 from .adapters.base import Conversation, Message
 
 _MESSAGE_SELECT = (
-    "SELECT m.*, c.project, c.source, c.rules, c.name AS conversation_name"
+    "SELECT m.*, c.project, c.source, c.rules, c.chat, c.name AS conversation_name"
     " FROM messages m JOIN conversations c ON c.id = m.conversation"
 )
 
@@ -21,6 +21,10 @@ _MEDIA_NAME = re.compile(r"(\d+)-\d+(?:\.\w+)?$")
 def _revision(raw: dict | str | None) -> tuple:
     data = json.loads(raw) if isinstance(raw, str) and raw else raw or {}
     return data.get("revision"), data.get("deleted_at"), data.get("edited_at")
+
+
+# 单聊不属于哪个项目，统一挂在这个内置项目下。
+PERSONAL = "personal"
 
 
 def guess_kind(name: str) -> str:
@@ -62,7 +66,7 @@ class Store:
             " FROM messages"),
         "groups": (
             "SELECT (SELECT group_concat(id || ':' || project || ':' || name || ':' || IFNULL(kind, '')"
-            "  || ':' || IFNULL(rules, ''), '|') FROM conversations),"
+            "  || ':' || IFNULL(rules, '') || ':' || mode, '|') FROM conversations),"
             " (SELECT group_concat(key || ':' || name || ':' || IFNULL(repo, ''), '|') FROM projects)"),
         "tasks": (
             "SELECT (SELECT COUNT(*) || ':' || IFNULL(MAX(updated_at), '') FROM tasks),"
@@ -103,13 +107,19 @@ class Store:
 
     # --- 会话（监测的群） ---
 
-    def add_conversation(self, project: str, conversation: Conversation) -> int:
+    def add_conversation(self, project: str, conversation: Conversation, chat: str = "group",
+                         mode: str = "ai") -> int:
+        # 单聊是发给真人的，按正式会话对待：发送前多一道确认。
+        kind = "prod" if chat == "direct" else guess_kind(conversation.name)
         with self.db:
+            if project == PERSONAL:
+                self.db.execute("INSERT OR IGNORE INTO projects (key, name, repo, created_at)"
+                                " VALUES (?, '个人', NULL, ?)", (PERSONAL, _now()))
             cursor = self.db.execute(
-                "INSERT INTO conversations (project, source, remote_id, name, added_at, kind, read_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO conversations (project, source, remote_id, name, added_at, kind, read_at, chat, mode)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (project, conversation.source, conversation.remote_id,
-                 conversation.name, _now(), guess_kind(conversation.name), _now()),
+                 conversation.name, _now(), kind, _now(), chat, mode),
             )
         return int(cursor.lastrowid)
 
@@ -171,15 +181,48 @@ class Store:
                 "UPDATE conversations SET read_at = MAX(IFNULL(read_at, ''), IFNULL((SELECT MAX(sent_at)"
                 " FROM messages WHERE conversation = ?), '')) WHERE id = ?", (id, id)).rowcount > 0
 
-    def unread_counts(self, ignore: tuple[str, ...] = ()) -> dict[int, int]:
-        marks = ", ".join("?" * len(ignore))
+    def unread_counts(self) -> dict[int, int]:
         rows = self.db.execute(
             "SELECT m.conversation, COUNT(*) AS n FROM messages m"
             " JOIN conversations c ON c.id = m.conversation"
-            " WHERE m.is_me = 0 AND m.sent_at > IFNULL(c.read_at, '')"
-            + (f" AND m.sender_name NOT IN ({marks})" if ignore else "")
-            + " GROUP BY m.conversation", ignore).fetchall()
+            " WHERE m.is_me = 0 AND m.bot = 0 AND m.sent_at > MAX(IFNULL(c.read_at, ''), IFNULL(c.seen_at, ''))"
+            " GROUP BY m.conversation").fetchall()
         return {row["conversation"]: row["n"] for row in rows}
+
+    def set_seen(self, id: int, at: datetime) -> None:
+        """平台上读到了 at（只往后推）：之前的不算未读，也不再算需回复。"""
+        value = at.astimezone(timezone.utc).isoformat(timespec="seconds")
+        with self.db:
+            self.db.execute("UPDATE conversations SET seen_at = ? WHERE id = ? AND IFNULL(seen_at, '') < ?",
+                            (value, id, value))
+
+    def read_before_unread(self, id: int, unread: int) -> datetime | None:
+        """平台说有 unread 条未读：别人发的最新 unread 条之前的都算读过。本地还没同步到的新消息只会让结果更保守。"""
+        row = self.db.execute("SELECT sent_at FROM messages WHERE conversation = ? AND is_me = 0"
+                              " ORDER BY sent_at DESC, id DESC LIMIT 1 OFFSET ?", (id, unread)).fetchone()
+        return datetime.fromisoformat(row[0]) if row else None
+
+    def remember_removed(self, source: str, remote_id: str) -> None:
+        """移除的单聊：记下时间，之后没有更新的消息就不自动加回来。"""
+        removed = self.setting("removed_direct")
+        self.set_setting("removed_direct", {**removed, f"{source}:{remote_id}": _now()})
+
+    def removed_at(self, source: str, remote_id: str) -> datetime | None:
+        at = self.setting("removed_direct").get(f"{source}:{remote_id}")
+        return datetime.fromisoformat(at) if at else None
+
+    def forget_removed(self, source: str, remote_id: str) -> None:
+        removed = self.setting("removed_direct")
+        self.set_setting("removed_direct", {k: v for k, v in removed.items() if k != f"{source}:{remote_id}"})
+
+    def rename_conversation(self, id: int, name: str) -> None:
+        with self.db:
+            self.db.execute("UPDATE conversations SET name = ? WHERE id = ?", (name, id))
+
+    def set_mode(self, id: int, mode: str) -> bool:
+        with self.db:
+            return self.db.execute(
+                "UPDATE conversations SET mode = ? WHERE id = ?", (mode, id)).rowcount > 0
 
     def set_kind(self, id: int, kind: str) -> bool:
         with self.db:
@@ -227,13 +270,13 @@ class Store:
         with self.db:
             self.db.executemany(
                 "INSERT OR IGNORE INTO messages (conversation, remote_id, sender_id,"
-                " sender_name, is_me, text, sent_at, reply_to, raw)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " sender_name, is_me, text, sent_at, reply_to, raw, bot)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (conversation, m.remote_id, m.sender_id, m.sender_name,
                      int(m.sender_id in mine), m.text,
                      m.sent_at.isoformat(timespec="seconds"), m.reply_to,
-                     json.dumps(m.raw, ensure_ascii=False))
+                     json.dumps(m.raw, ensure_ascii=False), int(m.bot))
                     for m in messages
                 ],
             )
@@ -333,9 +376,12 @@ class Store:
         """别人发的、还没标记处理的消息，附带我是否已引用回复过它，按时间从旧到新。"""
         return self.db.execute(
             _MESSAGE_SELECT.replace("SELECT m.*", "SELECT m.*, EXISTS (SELECT 1 FROM messages r"
-                                    " WHERE r.conversation = m.conversation AND r.is_me = 1"
-                                    " AND r.reply_to = m.remote_id) AS quoted")
-            + " WHERE m.is_me = 0 AND (? IS NULL OR c.project = ?) AND (? IS NULL OR m.sent_at >= ?)"
+                                    " WHERE r.conversation = m.conversation AND r.is_me = 1 AND r.bot = 0"
+                                    " AND r.reply_to = m.remote_id) AS quoted,"
+                                    " EXISTS (SELECT 1 FROM messages r WHERE r.conversation = m.conversation"
+                                    " AND r.is_me = 1 AND r.bot = 0 AND r.sent_at > m.sent_at) AS answered")
+            + " WHERE m.is_me = 0 AND m.bot = 0 AND c.mode != 'off' AND m.sent_at > IFNULL(c.seen_at, '')"
+            " AND (? IS NULL OR c.project = ?) AND (? IS NULL OR m.sent_at >= ?)"
             " AND NOT EXISTS (SELECT 1 FROM handled h WHERE h.message = m.id)"
             " ORDER BY m.sent_at, m.id",
             (project, project, since, since.astimezone(timezone.utc).isoformat(timespec="seconds") if since else None),

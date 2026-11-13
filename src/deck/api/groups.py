@@ -5,7 +5,7 @@ from urllib.parse import unquote
 from .. import actions
 from ..adapters import SOURCES
 from ..sync import sync
-from . import ApiError, op, shapes
+from . import PROJECT, ApiError, op, shapes
 
 
 @op("projects.list", "GET", r"/api/projects", "read", "项目列表")
@@ -57,7 +57,15 @@ def set_kind(ctx, args):
     return {"id": row["id"], "kind": row["kind"]}
 
 
-@op("groups.rules", "POST", r"/api/groups/(?P<id>\d+)/rules", "write", "设置群的提醒范围、关键词和免打扰时段")
+@op("groups.mode", "POST", r"/api/groups/(?P<id>\d+)/mode", "write",
+    "会话状态：ai 监听并 AI 分析、listen 监听但 AI 不读、off 停止监听（不再拉取，保留已有消息）")
+def set_mode(ctx, args):
+    row = actions.set_group_mode(ctx.store, int(args["id"]), str(args.get("mode", "")))
+    ctx.wake_watcher()
+    return {"group": shapes.group(ctx, row, ctx.store.paused_sources())}
+
+
+@op("groups.rules", "POST", r"/api/groups/(?P<id>\d+)/rules", "write", "设置会话的提醒范围、关键词和安静时段")
 def set_rules(ctx, args):
     body = {k: v for k, v in args.items() if k != "id"}
     return {"rules": actions.set_group_rules(ctx.store, int(args["id"]), body)}
@@ -77,7 +85,8 @@ def pause_source(ctx, args):
     return {"ok": True}
 
 
-@op("sync", "POST", r"/api/sync", "write", "立即拉取新消息：可按项目或平台限定")
+@op("sync", "POST", r"/api/sync", "write", "立即拉取新消息：可按项目或平台限定",
+    params={"project": PROJECT, "source": "string 平台：dingtalk 或 channel"})
 def sync_now(ctx, args):
     source = args.get("source") or None
     if source and source in ctx.store.paused_sources():

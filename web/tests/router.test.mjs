@@ -10,8 +10,8 @@ test('消息链接带 anchor 可往返解析', () => {
 })
 
 test('设置链接可带平台筛选', () => {
-  assert.equal(href({ name: 'settings', tab: 'reminders', source: 'channel' }), '#/settings/reminders?source=channel')
-  assert.deepEqual(parse('#/settings/reminders?source=channel'), { name: 'settings', tab: 'reminders', source: 'channel' })
-  assert.equal(parse('#/settings/reminders?source=x').source, undefined)
+  assert.equal(href({ name: 'settings', tab: 'connections', source: 'channel' }), '#/settings?source=channel')
+  assert.deepEqual(parse('#/settings?source=channel'), { name: 'settings', tab: 'connections', source: 'channel' })
+  assert.equal(parse('#/settings?source=x').source, undefined)
   assert.equal(href({ name: 'settings', tab: 'connections' }), '#/settings')
 })

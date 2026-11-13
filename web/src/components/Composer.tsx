@@ -33,6 +33,8 @@ export function Composer({
   const [saved, setSaved] = useState('')
   const [drafting, setDrafting] = useState(false)
   const [aiDraft, setAiDraft] = useState(false)
+  // AI 起草会用草稿替换输入框里的文字（文字当作要点），留一份原文好恢复。
+  const [replaced, setReplaced] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [uploaded, setUploaded] = useState<PublicAttachment | null>(null)
   const [fileError, setFileError] = useState<string | null>(null)
@@ -65,6 +67,7 @@ export function Composer({
     setError(null)
     try {
       const result = await api.draftAi({ message_id: message.id, instruction })
+      setReplaced(text)
       setText(result.draft)
       setAi(true)
       setAiDraft(true)
@@ -89,6 +92,7 @@ export function Composer({
       setText((current) => (current.trim() ? `${current.trimEnd()}\n\n${reply.initialText}` : reply.initialText!))
       setAi(!!reply.ai)
       setAiDraft(!!reply.ai)
+      setReplaced('')
     }
     if (reply) setTimeout(() => input.current?.focus(), 0)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -151,6 +155,7 @@ export function Composer({
       setFile(null)
       setUploaded(null)
       setAiDraft(false)
+      setReplaced('')
       setPreview(null)
       onClearReply()
       toast(warning ? `已发送，回读尚未完成。${warning}` : editing ? '已修改' : `已发送到「${group.name}」`, warning ? 'info' : 'success')
@@ -299,7 +304,23 @@ export function Composer({
         )}
 
         {!preview && aiDraft && !editing && (
-          <p className="px-3 pt-2 text-fs12 text-stone-500">AI 起草的内容，尚未发送；请核对修改，点「发送」后仍会先预览再确认。</p>
+          <p className="px-3 pt-2 text-fs12 text-stone-500">
+            AI 起草的内容，尚未发送；请核对修改，点「发送」后仍会先预览再确认。
+            {replaced.trim() && (
+              <button
+                type="button"
+                onClick={() => {
+                  setText(replaced)
+                  setReplaced('')
+                  setAiDraft(false)
+                  setAi(false)
+                }}
+                className="ml-1 text-accent-600 underline-offset-2 hover:underline"
+              >
+                恢复原文
+              </button>
+            )}
+          </p>
         )}
         {!preview && file && (
           <div className="mx-3 mt-2 flex items-center gap-2 rounded-lg bg-stone-50 p-2 text-fs12 dark:bg-stone-800/60">
@@ -351,16 +372,16 @@ export function Composer({
                   <Paperclip className="size-3.5" />
                 </button>
               )}
-              {reply && !reply.replyTo.is_me && (
+              {reply && !reply.replyTo.is_me && config?.ai_ready && (
                 <button
                   type="button"
                   onClick={() => void aiAssist(reply.replyTo, text.trim() || undefined)}
                   disabled={drafting || busy}
-                  title="让 AI 起草回复：只填入输入框，不会自动发送；已输入的文字会作为要点"
+                  title="让 AI 起草回复：已输入的文字作为要点，草稿替换输入框内容，可恢复原文；不会自动发送"
                   className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-fs12 font-medium text-stone-500 hover:bg-stone-100 disabled:opacity-40 max-md:h-10 max-md:px-3 max-md:text-fs13 dark:hover:bg-stone-800"
                 >
                   {drafting ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
-                  AI 起草
+                  {text.trim() ? '按要点起草' : 'AI 起草'}
                 </button>
               )}
               <button

@@ -97,17 +97,20 @@ export function Switch({
   checked,
   onChange,
   label,
+  disabled,
 }: {
   checked: boolean
   onChange: (value: boolean) => void
   label: ReactNode
+  disabled?: boolean
 }) {
   return (
-    <label className="inline-flex cursor-pointer items-center gap-2 select-none">
+    <label className={clsx('inline-flex items-center gap-2 select-none', disabled ? 'cursor-not-allowed' : 'cursor-pointer')}>
       <button
         type="button"
         role="switch"
         aria-checked={checked}
+        disabled={disabled}
         onClick={() => onChange(!checked)}
         className={clsx(
           'relative inline-flex h-[18px] w-8 shrink-0 rounded-full transition-colors',

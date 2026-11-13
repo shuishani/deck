@@ -3,11 +3,11 @@ import { Copy } from 'lucide-react'
 import { useState } from 'react'
 import type { Config } from '../../api'
 import { copyText } from '../../clipboard'
-import { Modified, SaveBar, Section, SettingRow, numberInput, useSettingsSave } from '../../components/SettingsLayout'
+import { SaveBar, Section, SettingRow, numberInput, useSettingsSave } from '../../components/SettingsLayout'
 import { useToast } from '../../components/Toast'
 import { useData } from '../../state'
 
-/** 消息保留：属于数据管理，放在「访问」页签。 */
+/** 消息保留：放在「会话」页签。 */
 export function Retention() {
   const { config } = useData()
   if (!config) return null
@@ -23,17 +23,13 @@ function RetentionForm({ config }: { config: Config }) {
   const command = 'deck prune'
 
   return (
-    <Section title="消息保留" description="deck 不会自动删除消息；挂在任务上的消息作为证据一直保留。">
+    <Section title="消息保留" description="deck 不会自动删除消息；已关联任务的消息始终保留。">
       <SettingRow
         label="保留期限"
         hint={
           <>
-            运行 <code className="rounded bg-stone-100 px-1 font-mono text-fs11 dark:bg-stone-800">{command}</code> 时，删除超过这个天数的消息。
+            执行 <code className="rounded bg-stone-100 px-1 font-mono text-fs11 dark:bg-stone-800">{command}</code> 时，删除早于该天数的消息。
           </>
-        }
-        badge={
-          config.overridden.includes('retention_days') &&
-          days === null && <Modified defaultText={`${config.defaults.retention_days ?? 30} 天`} onReset={() => void save({ reset: ['retention_days'] }, '已恢复默认值')} disabled={busy} />
         }
       >
         <div className="flex items-center gap-2">
@@ -52,7 +48,7 @@ function RetentionForm({ config }: { config: Config }) {
             天
           </label>
           <button
-            onClick={async () => toast((await copyText(command)) ? '已复制，在运行 deck 的电脑上执行' : '复制失败', 'info')}
+            onClick={async () => toast((await copyText(command)) ? '已复制，请在运行 deck 的电脑上执行' : '复制失败', 'info')}
             title="复制清理命令"
             className="inline-flex h-8 items-center gap-1 rounded-lg border border-stone-200 px-2.5 text-fs12 text-stone-600 hover:bg-stone-50 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800"
           >

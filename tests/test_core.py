@@ -5,10 +5,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from deck import cli, migrations
-from deck.adapters.base import Conversation, Message
+from deck import actions, cli, migrations
+from deck.adapters.base import ChatState, Conversation, Message
 from deck.store import Store
-from deck.sync import sync
+from deck.sync import refresh_chats, sync
 
 
 class FakeAdapter:
@@ -77,6 +77,41 @@ def test_one_failing_group_does_not_stop_others(store):
     results = sync(store, lambda source: bad if source == "dingtalk" else good)
     assert results[0].error == "断线"
     assert results[1].added == 1
+
+
+def test_chat_list_adds_direct_chats_tracks_platform_reads_and_respects_removal(store):
+    chat = Conversation("dingtalk", "d1", "张三")
+    last = datetime(2026, 11, 9, tzinfo=timezone.utc)
+
+    class Chats:
+        source = "dingtalk"
+
+        def __init__(self, last_at, read=None, unread=None):
+            self.state = ChatState(chat, True, last_at, read, unread)
+
+        def chats(self, mine):
+            return [self.state]
+
+    [id] = refresh_chats(store, Chats(last))
+    row = store.conversation(id)
+    assert (row["project"], row["chat"], row["mode"], row["kind"]) == ("personal", "direct", "listen", "prod")
+    store.set_sync_status(id, None)
+    assert refresh_chats(store, Chats(last)) == []
+    assert refresh_chats(store, Chats(datetime.now(timezone.utc))) == [id]
+    # 平台上还剩 1 条未读：更早的都算读过；读到哪里只往后推。
+    times = [datetime(2026, 11, 9, h, tzinfo=timezone.utc) for h in (1, 2, 3)]
+    store.add_messages(id, [Message("dingtalk", f"m{i}", "d1", "U2", "张三", "在吗", t) for i, t in enumerate(times)], set())
+    refresh_chats(store, Chats(last, unread=1))
+    assert store.conversation(id)["seen_at"] == times[1].isoformat()
+    refresh_chats(store, Chats(last, read=times[0]))
+    assert store.conversation(id)["seen_at"] == times[1].isoformat()
+    # 禁用的不同步；移除后像删掉的对话，对方再发新消息才回来。
+    store.set_mode(id, "off")
+    assert refresh_chats(store, Chats(datetime.now(timezone.utc))) == []
+    actions.remove_group(store, id)
+    assert refresh_chats(store, Chats(last)) == [] and not store.conversation(id)
+    [again] = refresh_chats(store, Chats(datetime(2099, 1, 1, tzinfo=timezone.utc)))
+    assert store.conversation(again)["mode"] == "listen" and store.removed_at("dingtalk", "d1") is None
 
 
 def test_prune_removes_only_older_than_retention(store):

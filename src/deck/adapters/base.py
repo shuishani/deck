@@ -22,6 +22,26 @@ class Message:
     sent_at: datetime
     reply_to: str | None = None
     raw: dict = field(default_factory=dict, compare=False)
+    # AI 或机器人发的（含拍档代真人自动发的）：@人不算有人找我，我的拍档自动回的也不算我回过。
+    bot: bool = False
+
+
+@dataclass(frozen=True)
+class ChatState:
+    """平台会话列表里的一项：是不是单聊、最后一条的时间、我在平台上读到哪里（或还有几条未读）。"""
+    conversation: Conversation
+    direct: bool
+    last_at: datetime | None
+    read_until: datetime | None = None
+    unread: int | None = None
+
+
+def parse_time(text: str | None) -> datetime | None:
+    """平台给的带时区 ISO 时间；没有或认不出时返回 None。"""
+    try:
+        return datetime.fromisoformat(text) if text else None
+    except ValueError:
+        return None
 
 
 class Adapter(Protocol):
@@ -31,6 +51,10 @@ class Adapter(Protocol):
 
     def resolve(self, query: str) -> Conversation:
         """按名字或原始 id 找到唯一的会话；找不到或不唯一就报错。"""
+        ...
+
+    def chats(self, mine: set[str]) -> list[ChatState]:
+        """我加入的全部会话（群和单聊）及各自的已读状态；mine 是我的发送人 id。"""
         ...
 
     def fetch(

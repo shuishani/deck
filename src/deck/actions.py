@@ -13,6 +13,7 @@ from .sync import sync
 AdapterFor = Callable[[str], Adapter]
 
 KINDS = ("test", "prod")
+MODES = ("ai", "listen", "off")
 TASK_STATUSES = ("todo", "doing", "review", "done")
 TASK_PRIORITIES = ("low", "medium", "high", "urgent")
 _TASK_SOURCE = {"group_id": int, "group_name": str, "message_id": int,
@@ -70,6 +71,8 @@ def remove_group(store: Store, id: int) -> Row:
     row = store.conversation(id)
     if not row or not store.remove_conversation(id):
         raise ValueError(f"群 {id} 不存在")
+    if row["chat"] == "direct":
+        store.remember_removed(row["source"], row["remote_id"])
     store.audit("me", "group.remove", f"{row['source']}:{row['remote_id']}",
                 {"name": row["name"]}, "ok")
     return row
@@ -83,6 +86,16 @@ def set_group_kind(store: Store, id: int, kind: str) -> Row:
         raise ValueError(f"群 {id} 不存在")
     store.audit("me", "group.kind", f"{row['source']}:{row['remote_id']}",
                 {"name": row["name"], "kind": kind}, "ok")
+    return store.conversation(id)
+
+
+def set_group_mode(store: Store, id: int, mode: str) -> Row:
+    if mode not in MODES:
+        raise ValueError("会话状态须为 ai（监听并 AI 分析）、listen（监听，AI 不读）或 off（停止监听）")
+    row = store.conversation(id)
+    if not row or not store.set_mode(id, mode):
+        raise LookupError("会话不存在")
+    store.audit("me", "group.mode", f"{row['source']}:{row['remote_id']}", {"name": row["name"], "mode": mode}, "ok")
     return store.conversation(id)
 
 
@@ -328,13 +341,17 @@ def is_retracted(row: Row) -> bool:
     return bool(row["retracted_at"] or raw.get("deleted_at"))
 
 
+def _own_plan(store: Store, row: Row, text: str, notice: str) -> dict:
+    return {"group": row["conversation_name"], "source": row["source"],
+            "kind": store.conversation(row["conversation"])["kind"], "text": text,
+            "reply_to": None, "notice": notice}
+
+
 def plan_edit(store: Store, id: int, text: str) -> tuple[Row, dict]:
     row = _own_message(store, id)
     if not text.strip():
         raise ValueError("消息内容不能为空")
-    return row, {"group": row["conversation_name"], "source": row["source"],
-                 "kind": store.conversation(row["conversation"])["kind"], "text": text,
-                 "reply_to": None, "notice": "将修改已发送的消息，群内成员会看到「已编辑」"}
+    return row, _own_plan(store, row, text, "将修改已发送的消息，群内成员会看到「已编辑」")
 
 
 def edit_message(store: Store, adapter_for: AdapterFor, id: int, text: str) -> None:
@@ -354,8 +371,13 @@ def edit_message(store: Store, adapter_for: AdapterFor, id: int, text: str) -> N
     store.update_message(id, fresh.text if fresh else text, fresh.raw if fresh else raw)
 
 
-def retract_message(store: Store, adapter_for: AdapterFor, id: int) -> None:
+def plan_retract(store: Store, id: int) -> tuple[Row, dict]:
     row = _own_message(store, id)
+    return row, _own_plan(store, row, row["text"], "撤回后群内所有人都将看不到这条消息")
+
+
+def retract_message(store: Store, adapter_for: AdapterFor, id: int) -> None:
+    row, _ = plan_retract(store, id)
     target = f"{row['source']}:{row['remote_id']}"
     conversation = store.conversation(row["conversation"])["remote_id"]
     try:

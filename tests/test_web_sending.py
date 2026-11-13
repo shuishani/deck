@@ -291,8 +291,10 @@ def test_edit_and_retract_own_messages_only(api, store, monkeypatch):
     assert api("POST", f"/api/messages/{mine}/edit", {"text": "你好呀", "confirm": True}, w)[0] == 200
     message = next(m for m in api("GET", "/api/timeline")[1]["messages"] if m["id"] == mine)
     assert (message["text"], message["edited"]) == ("你好呀", True)
-    assert api("POST", f"/api/messages/{mine}/retract", {}, w)[0] == 200
+    _, body = api("POST", f"/api/messages/{mine}/retract", {}, w)
+    assert body["preview"]["text"] == "你好呀" and len(calls) == 1
+    assert api("POST", f"/api/messages/{mine}/retract", {"confirm": True}, w)[0] == 200
     message = next(m for m in api("GET", "/api/timeline")[1]["messages"] if m["id"] == mine)
     assert message["retracted"] and message["text"] == ""
-    assert api("POST", f"/api/messages/{mine}/retract", {}, w)[0] == 400
+    assert api("POST", f"/api/messages/{mine}/retract", {"confirm": True}, w)[0] == 400
     assert calls == [("edit", "你好呀"), ("retract",)]

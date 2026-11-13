@@ -1,4 +1,5 @@
 import { Search } from 'lucide-react'
+import type { ReactNode } from 'react'
 import type { Source } from '../api'
 import { SOURCES, sourceName } from '../platforms'
 import { SourceBadge } from './SourceBadge'
@@ -55,6 +56,7 @@ export function GroupFilterBar({
   fields = ['query', 'project', 'source'],
   placeholder = '搜索群名或项目',
   counts,
+  leading,
 }: {
   groups: Filterable[]
   value: GroupFilter
@@ -65,6 +67,8 @@ export function GroupFilterBar({
   placeholder?: string
   /** 平台标签上显示的数量；不给时数群。 */
   counts?: (source: 'all' | Source) => number
+  /** 放在搜索框左边同一行，例如分类切换。 */
+  leading?: ReactNode
 }) {
   const projectName = (key: string) => projects.find((p) => p.key === key)?.name ?? key
   const count = (skip: FilterField, test: (g: Filterable) => boolean) =>
@@ -94,16 +98,17 @@ export function GroupFilterBar({
 
   return (
     <div className="space-y-2">
-      {(showSearch || showProject) && (
-        <div className="flex gap-1.5">
+      {(leading || showSearch || showProject) && (
+        <div className="flex flex-wrap gap-1.5">
+          {leading}
           {showSearch && (
-            <label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg bg-stone-100 px-2.5 max-md:h-10 max-md:px-3 dark:bg-stone-800">
+            <label className="flex h-8 min-w-40 flex-1 items-center gap-2 rounded-lg bg-stone-100 px-2.5 max-md:h-10 max-md:px-3 dark:bg-stone-800">
               <Search className="size-3.5 shrink-0 text-stone-400 max-md:size-4" />
               <input
                 value={value.query}
                 onChange={(event) => onChange({ ...value, query: event.target.value })}
                 placeholder={placeholder}
-                aria-label="搜索群"
+                aria-label={placeholder}
                 className="min-w-0 flex-1 bg-transparent text-fs13 outline-none placeholder:text-stone-400"
               />
             </label>

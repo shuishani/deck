@@ -7,25 +7,24 @@ import { Access } from './Access'
 import { AiSettingsPage } from './Ai'
 import { Connections } from './Connections'
 import { Reminders } from './Reminders'
-import { Retention } from './Retention'
 import { Log, LOG_SUBTITLE } from '../Log'
 
 // 电脑端日志在侧边栏有独立入口；手机底栏只有 4 格，日志仍放在设置里。
 type Tab = SettingsTab | 'log'
 
 const tabs: { id: Tab; label: string }[] = [
-  { id: 'connections', label: '连接' },
-  { id: 'reminders', label: '群与提醒' },
+  { id: 'connections', label: '会话' },
+  { id: 'reminders', label: '提醒' },
   { id: 'ai', label: 'AI' },
   { id: 'access', label: '访问' },
   { id: 'log', label: '日志' },
 ]
 
 const subtitles: Record<Tab, string> = {
-  connections: '已接入的平台及登录状态',
-  reminders: '监测的群，以及哪些消息需要你处理',
-  ai: 'AI 功能、模型与用量',
-  access: '可访问 deck 的设备、消息保留',
+  connections: 'deck 从哪些平台拉哪些会话、存多久',
+  reminders: '什么消息要我处理、什么时候推送到钉钉',
+  ai: '模型、用量与 AI 身份',
+  access: '从哪些地址、哪些设备打开 deck',
   log: LOG_SUBTITLE,
 }
 
@@ -45,15 +44,10 @@ export function Settings({ tab, source }: { tab: Tab; source?: Source }) {
         </PageHeader>
       }
     >
-      {tab === 'connections' && <Connections />}
-      {tab === 'reminders' && <Reminders key={source ?? 'all'} source={source} />}
+      {tab === 'connections' && <Connections key={source ?? 'all'} source={source} />}
+      {tab === 'reminders' && <Reminders />}
       {tab === 'ai' && <AiSettingsPage />}
-      {tab === 'access' && (
-        <div className="space-y-8">
-          <Access />
-          <Retention />
-        </div>
-      )}
+      {tab === 'access' && <Access />}
       {tab === 'log' && <Log />}
     </Page>
   )

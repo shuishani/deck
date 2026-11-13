@@ -143,7 +143,7 @@ def _parser() -> argparse.ArgumentParser:
 
     ai_commands = sub.add_parser("ai", help="模型设置、问答和待审核草稿，不自动发送").add_subparsers(required=True)
     ai_commands.add_parser("settings", help="查看 AI 配置和用量，不显示密钥").set_defaults(run=_ai_settings)
-    p = ai_commands.add_parser("configure", help="用 JSON 修改模型配置，密钥只引用环境变量名")
+    p = ai_commands.add_parser("configure", help="用 JSON 修改模型配置，密钥存在 macOS 钥匙串，这里只填条目名")
     p.add_argument("values")
     p.add_argument("--approve-endpoint", action="store_true", help="在本机批准当前接口地址；本机以外的地址都须批准后才能调用")
     p.set_defaults(run=_ai_configure)
@@ -235,6 +235,9 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("name", nargs="?", help="操作名，如 tasks.create")
     p.add_argument("params", nargs="?", default="{}", help="JSON 对象形式的参数")
     p.set_defaults(run=_call)
+
+    p = sub.add_parser("mcp", help="以 MCP 服务运行（stdio），给 Claude Code、BaoCode 等 agent 调用")
+    p.set_defaults(run=_mcp)
     return parser
 
 
@@ -495,11 +498,9 @@ def _edit(args) -> None:
 def _retract(args) -> None:
     with _store() as (store, config):
         if not args.yes:
-            row = store.message(args.id)
-            if not row:
-                raise ValueError(f"消息 {args.id} 不存在")
-            _emit(args, {"ok": True, "retracted": False},
-                  f"将撤回 [{args.id}] {row['conversation_name']}：{row['text']}\n（加 --yes 确认撤回）")
+            _, plan = actions.plan_retract(store, args.id)
+            _emit(args, {"ok": True, "retracted": False, "preview": plan},
+                  f"将撤回 [{args.id}] {plan['group']}：{plan['text']}\n（加 --yes 确认撤回）")
             return
         actions.retract_message(store, lambda s: adapter_for(s, config), args.id)
     _emit(args, {"ok": True, "retracted": True}, "已撤回")
@@ -778,6 +779,12 @@ def _call(args) -> None:
             raise ValueError(str(error)) from None
     json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")
+
+
+def _mcp(args) -> None:
+    from . import mcp
+
+    mcp.serve()
 
 
 def _emit(args, data, text: str) -> None:

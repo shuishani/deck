@@ -1,6 +1,6 @@
 """待发送附件：本机暂存、校验、绑定用户和群，最终确认时才通过平台 CLI 发出。
 
-暂存文件不会自动删除或过期；元数据表由本模块自己创建。
+暂存文件不会自动删除或过期。
 """
 import os
 import re
@@ -44,23 +44,12 @@ _CAPABILITIES = {
 _NONE = dict(send_text=False, send_images=False, send_files=False, reply=False,
              reply_attachments=False, edit=False, retract=False)
 
-_TABLE = """CREATE TABLE IF NOT EXISTS upload (
-    id TEXT PRIMARY KEY, owner TEXT NOT NULL, conv_group INTEGER NOT NULL,
-    name TEXT NOT NULL, size INTEGER NOT NULL, mime TEXT NOT NULL, kind TEXT NOT NULL,
-    path TEXT NOT NULL, created_at TEXT NOT NULL)"""
-
-
 def capabilities(source: str) -> dict:
     caps = dict(_CAPABILITIES.get(source, _NONE))
     known = source in _CAPABILITIES
     caps["max_attachment_bytes"] = MAX_BYTES if known else 0
     caps["max_files"] = MAX_FILES if known else 0
     return caps
-
-
-def _ensure(store) -> None:
-    store.db.execute(_TABLE)
-    store.db.commit()
 
 
 def _clean_name(name: str) -> str:
@@ -97,7 +86,6 @@ def _validate(name: str, data: bytes) -> tuple[str, str, str]:
 def create(store, config, owner: str, group: int, name: str, data: bytes) -> dict:
     """校验并暂存一个附件，只在本机，不上传到平台。返回公开字段。"""
     name, mime, kind = _validate(name, data)
-    _ensure(store)
     id = str(uuid.uuid4())
     root = Path(config.home) / "uploads"
     folder = root / id
@@ -125,7 +113,6 @@ def create(store, config, owner: str, group: int, name: str, data: bytes) -> dic
 
 def get(store, owner: str, id: str) -> dict | None:
     """按所有者取内部元数据（含 path），登录后预览/下载用；不属于该用户返回 None。"""
-    _ensure(store)
     row = store.db.execute("SELECT * FROM upload WHERE id = ? AND owner = ?", (id, owner)).fetchone()
     return _row(row) if row else None
 

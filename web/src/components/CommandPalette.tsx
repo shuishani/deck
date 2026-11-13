@@ -22,8 +22,8 @@ const pages: { label: string; icon: ReactNode; to: Route }[] = [
   { label: '任务', icon: <ListTodo className="size-4" />, to: { name: 'tasks' } },
   { label: '项目', icon: <FolderKanban className="size-4" />, to: { name: 'projects' } },
   { label: '日志', icon: <ScrollText className="size-4" />, to: { name: 'log' } },
-  { label: '设置 · 连接', icon: <Settings className="size-4" />, to: { name: 'settings', tab: 'connections' } },
-  { label: '设置 · 群与提醒', icon: <Settings className="size-4" />, to: { name: 'settings', tab: 'reminders' } },
+  { label: '设置 · 会话', icon: <Settings className="size-4" />, to: { name: 'settings', tab: 'connections' } },
+  { label: '设置 · 提醒', icon: <Settings className="size-4" />, to: { name: 'settings', tab: 'reminders' } },
   { label: '设置 · AI', icon: <Settings className="size-4" />, to: { name: 'settings', tab: 'ai' } },
   { label: '设置 · 访问', icon: <Settings className="size-4" />, to: { name: 'settings', tab: 'access' } },
 ]

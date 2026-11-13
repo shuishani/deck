@@ -19,16 +19,18 @@ export function SourceBadge({ source, className }: { source: Source; className?:
 }
 
 export function watchTone(watch: WatchState) {
+  if (watch.mode === 'off') return 'off'
   if (watch.mode === 'paused') return 'paused'
   if (watch.error) return 'error'
   return watch.mode === 'realtime' ? 'realtime' : 'poll'
 }
 
 export function watchShort(watch: WatchState) {
-  return { paused: '已暂停', error: '异常', realtime: '实时', poll: '轮询' }[watchTone(watch)]
+  return { off: '已禁用', paused: '已暂停', error: '异常', realtime: '实时', poll: '轮询' }[watchTone(watch)]
 }
 
 export function watchLabel(watch: WatchState) {
+  if (watch.mode === 'off') return '会话已禁用：不再拉取新消息，已有消息保留'
   if (watch.mode === 'paused') return '已暂停监听，可在「设置 → 连接」中恢复'
   if (watch.error) return `异常：${watch.error}`
   const mode = watch.mode === 'realtime' ? '实时监听' : '定时轮询'
@@ -46,7 +48,7 @@ export function StatusDot({ watch, className }: { watch: WatchState; className?:
         className={clsx(
           'relative inline-flex size-2 rounded-full',
           (tone === 'realtime' || tone === 'poll') && 'bg-emerald-500',
-          tone === 'paused' && 'border border-stone-400 dark:border-stone-500',
+          (tone === 'paused' || tone === 'off') && 'border border-stone-400 dark:border-stone-500',
           tone === 'error' && 'bg-red-500',
         )}
       />

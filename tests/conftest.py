@@ -13,8 +13,7 @@ from deck.store import Store
 
 @pytest.fixture
 def config(tmp_path):
-    return Config(home=tmp_path, reply_reminder_hours=2, ignore_senders=("management-x-dev",),
-                  ai_prefix="【MX 助手】")
+    return Config(home=tmp_path, ai_prefix="【MX 助手】")
 
 
 @pytest.fixture
@@ -27,9 +26,14 @@ def store(config):
 
 
 @pytest.fixture
-def server(config, store, monkeypatch):
+def server(config, store, monkeypatch, tmp_path):
     _fill(store, [_msg("me", "ME", "你好", 60), _msg("q", "OTHER", "@李涛 看下", 10)])
     monkeypatch.setattr(api_module, "adapter_for", lambda source, config: Adapter([]))
+    # 前端产物不进 git；只检出代码时也要能跑。
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("<!doctype html>", encoding="utf-8")
+    monkeypatch.setattr(server_module, "STATIC", static)
     config = replace(config, server=ServerConfig(port=0, allowed_hosts=("deck.example.com",)))
     httpd = server_module.make_server(config, None)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()

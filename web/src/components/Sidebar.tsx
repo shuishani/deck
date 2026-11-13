@@ -200,17 +200,17 @@ function NavItem({ item, active }: { item: NavEntry; active: boolean }) {
   )
 }
 
-/** 平时一行灰字；有群监听异常时变红，点进「设置 → 连接」。 */
+/** 平时一行灰字；有群监听异常时变红，点进「设置 → 会话」。 */
 function WatchStatus({ groups }: { groups: GroupInfo[] }) {
   if (!groups.length) return null
   const failing = groups.filter((g) => watchTone(g.watch) === 'error')
-  const paused = groups.filter((g) => watchTone(g.watch) === 'paused').length
+  const paused = groups.filter((g) => ['paused', 'off'].includes(watchTone(g.watch))).length
   const watching = groups.length - paused
   return (
     <div className="border-t border-stone-200 px-2 py-2 text-fs12 dark:border-stone-800">
       <a
         href={CONNECTIONS}
-        title={failing.length ? failing.map((g) => `${g.name}：${g.watch.error}`).join('\n') : '查看连接状态'}
+        title={failing.length ? failing.map((g) => `${g.name}：${g.watch.error}`).join('\n') : '查看会话和平台状态'}
         className={clsx(
           'flex items-center gap-2 rounded-md px-2 py-1 transition-colors hover:bg-white/60 dark:hover:bg-stone-800/60',
           failing.length ? 'font-medium text-red-600 dark:text-red-400' : 'text-stone-500 dark:text-stone-400',
@@ -225,7 +225,7 @@ function WatchStatus({ groups }: { groups: GroupInfo[] }) {
         {failing.length
           ? `${failing.length} 个群监听异常`
           : watching
-            ? `监听正常 · ${watching} 个群${paused ? `，${paused} 个已暂停` : ''}`
+            ? `监听正常 · ${watching} 个会话${paused ? `，${paused} 个已暂停或禁用` : ''}`
             : '监听已全部暂停'}
       </a>
     </div>

@@ -1,5 +1,4 @@
 import json
-import math
 import os
 import shutil
 import sqlite3
@@ -14,10 +13,6 @@ TEMPLATE = """\
 retention_days = {retention_days}
 # AI 对外发消息时加在开头的身份说明（deck send --ai）
 ai_prefix = "{ai_prefix}"
-# @我的消息超过多少小时没回，算超时
-reply_reminder_hours = 2
-# 这些发送人（如通知机器人）@我 不算要我回复
-ignore_senders = []
 # channel 多少秒轮询一次；钉钉有实时监听，另按 5 分钟补拉一次
 poll_seconds = 30
 
@@ -62,8 +57,6 @@ class Config:
     home: Path
     retention_days: int = 30
     ai_prefix: str = ""
-    reply_reminder_hours: float = 2
-    ignore_senders: tuple[str, ...] = ()
     poll_seconds: int = 30
     tools: dict[str, str] = field(default_factory=lambda: {"dws": "dws", "drlee": "drlee"})
     server: ServerConfig = field(default_factory=ServerConfig)
@@ -106,14 +99,12 @@ def load(base: Path | None = None) -> Config:
     return config
 
 
-EDITABLE = ("retention_days", "ai_prefix", "reply_reminder_hours", "ignore_senders", "poll_seconds")
+EDITABLE = ("retention_days", "ai_prefix", "poll_seconds")
 
 
 def _editable(data: dict) -> dict:
     return {"retention_days": int(data.get("retention_days", 30)),
             "ai_prefix": str(data.get("ai_prefix", "")),
-            "reply_reminder_hours": float(data.get("reply_reminder_hours", 2)),
-            "ignore_senders": tuple(data.get("ignore_senders", ())),
             "poll_seconds": max(5, int(data.get("poll_seconds", 30)))}
 
 
@@ -135,19 +126,8 @@ def validate_settings(data: dict) -> dict:
     for key, minimum, maximum in (("retention_days", 1, 3650), ("poll_seconds", 5, 3600)):
         if key in values and (type(values[key]) is not int or not minimum <= values[key] <= maximum):
             raise ValueError(f"{key} 须为 {minimum}～{maximum} 的整数")
-    if "reply_reminder_hours" in values:
-        n = values["reply_reminder_hours"]
-        if type(n) not in (int, float) or not math.isfinite(n) or not 0 < n <= 8760:
-            raise ValueError("提醒时限须大于 0 且不超过 8760 小时")
     if "ai_prefix" in values and (not isinstance(values["ai_prefix"], str) or len(values["ai_prefix"]) > 200):
         raise ValueError("身份前缀须为不超过 200 字的文本")
-    if "ignore_senders" in values:
-        names = values["ignore_senders"]
-        if not isinstance(names, (list, tuple)) or len(names) > 100 or any(
-            not isinstance(n, str) or not n.strip() or len(n) > 200 for n in names
-        ):
-            raise ValueError("忽略发送人须为姓名列表，每项不能为空")
-        values["ignore_senders"] = tuple(dict.fromkeys(n.strip() for n in names))
     return values
 
 

@@ -156,7 +156,56 @@ def _audit_via(db: sqlite3.Connection) -> None:
     _add_column(db, "audit", "via TEXT")
 
 
-STEPS = [_baseline, _audit_via]
+def _module_tables(db: sqlite3.Connection) -> None:
+    """AI 用量和待发送附件的表，原先由各模块用到时自己建。"""
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS ai_calls (id INTEGER PRIMARY KEY, month TEXT NOT NULL,"
+        " project TEXT, reserved INTEGER NOT NULL, input_tokens INTEGER NOT NULL DEFAULT 0,"
+        " output_tokens INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL, at TEXT NOT NULL)")
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS upload (id TEXT PRIMARY KEY, owner TEXT NOT NULL,"
+        " conv_group INTEGER NOT NULL, name TEXT NOT NULL, size INTEGER NOT NULL, mime TEXT NOT NULL,"
+        " kind TEXT NOT NULL, path TEXT NOT NULL, created_at TEXT NOT NULL)")
+
+
+def _conversation_mode(db: sqlite3.Connection) -> None:
+    """会话状态：ai 监听并交给 AI，listen 只监听，off 禁用（不再拉取，保留消息）；chat 区分群聊和单聊。"""
+    _add_column(db, "conversations", "mode TEXT NOT NULL DEFAULT 'ai'")
+    _add_column(db, "conversations", "chat TEXT NOT NULL DEFAULT 'group'")
+
+
+def _agents_and_seen(db: sqlite3.Connection) -> None:
+    """messages.bot：AI 或机器人发的；conversations.seen_at：在平台上读到哪里（钉钉、channel 自己的已读）。"""
+    _add_column(db, "messages", "bot INTEGER NOT NULL DEFAULT 0")
+    _add_column(db, "conversations", "seen_at TEXT")
+    for source, test in (("channel", "json_extract(raw, '$.sender_kind') = 'agent'"),
+                         ("dingtalk", "json_extract(raw, '$.messageAiSendFlag') IS NOT NULL")):
+        db.execute(f"UPDATE messages SET bot = 1 WHERE json_valid(raw) AND {test}"
+                   " AND conversation IN (SELECT id FROM conversations WHERE source = ?)", (source,))
+
+
+def _assisted(db: sqlite3.Connection) -> None:
+    """channel 拍档自动代发的消息也算 AI 发的。"""
+    db.execute(
+        "UPDATE messages SET bot = 1 WHERE bot = 0 AND json_valid(raw)"
+        " AND conversation IN (SELECT id FROM conversations WHERE source = 'channel')"
+        " AND EXISTS (SELECT 1 FROM json_each(raw, '$.blocks') b WHERE json_extract(b.value, '$.type') = 'ai_assisted'"
+        " AND json_extract(b.value, '$.automatic'))")
+
+
+def _drop_reply_timeout(db: sqlite3.Connection) -> None:
+    """「回复超时」并入推送级别「高」：去掉旧的覆盖值。"""
+    db.execute("UPDATE settings SET value = json_remove(value, '$.reply_reminder_hours')"
+               " WHERE key = 'runtime_config' AND json_valid(value)")
+
+
+def _drop_ignore_senders(db: sqlite3.Connection) -> None:
+    """「不提醒的发送人」去掉了：清掉网页、CLI 存过的名单。"""
+    db.execute("UPDATE settings SET value = json_remove(value, '$.ignore_senders')"
+               " WHERE key = 'runtime_config' AND json_valid(value)")
+
+
+STEPS = [_baseline, _audit_via, _module_tables, _conversation_mode, _agents_and_seen, _assisted, _drop_reply_timeout, _drop_ignore_senders]
 
 
 def version(db: sqlite3.Connection) -> int:

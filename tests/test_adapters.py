@@ -135,6 +135,7 @@ def test_channel_content_reads_files_and_voice_blocks():
         "image", 7, {"channel_id": "ch", "file_id": "i", "name": "a.jpg"})
 
 
+
 def test_dingtalk_download_runs_in_a_scratch_dir_and_moves_the_file(tmp_path):
     seen = {}
 
@@ -197,3 +198,28 @@ def test_channel_can_send_with_a_separate_drlee():
     adapter.send("ch", "你好")
     adapter.send("ch", "【MX 助手】你好", ai=True)
     assert [call[0] for call in run.calls] == ["drlee-old", "drlee"]
+
+
+def test_chat_lists_and_ai_flags_are_parsed_per_platform():
+    dingtalk = DingTalkAdapter("dws", run=FakeRun({"chats": [
+        {"conversationType": "group", "openConversationId": "g1", "name": "群", "unreadPoint": 2},
+        {"conversationType": "direct", "openConversationId": "d1", "name": "张三",
+         "lastMsgCreateAt": "2026-11-09T12:00:56.305+08:00", "unreadPoint": 0}]}))
+    group, direct = dingtalk.chats(set())
+    assert (group.direct, group.unread, group.read_until) == (False, 2, None)
+    assert (direct.direct, direct.conversation.name, direct.read_until) == (True, "张三", direct.last_at)
+    # channel 私信的 name 是内部编号，取对方的名字。
+    channel = ChannelAdapter("drlee", run=FakeRun({"data": [
+        {"id": "c2", "type": "dm", "name": "dm-uuid", "last_message_created_at": None,
+         "last_read_message_created_at": "2026-11-10T08:48:52Z",
+         "member_previews": [{"id": "ME", "display_name": "我"}, {"id": "U2", "display_name": "李四"}]}]}))
+    [dm] = channel.chats({"ME"})
+    assert (dm.direct, dm.conversation.name, dm.read_until.isoformat()) == (True, "李四", "2026-11-10T08:48:52+00:00")
+
+    base = {"id": "m", "created_at": "2026-11-10T08:48:52Z", "sender_kind": "user"}
+    bots = [ChannelAdapter("drlee")._message("c", {**base, **extra}).bot for extra in (
+        {}, {"sender_kind": "agent"}, {"blocks": [{"type": "ai_assisted", "automatic": True}]},
+        {"blocks": [{"type": "ai_assisted"}]})]
+    assert bots == [False, True, True, False]
+    item = {"messageId": "m", "createTime": "2026-11-09 18:43:05", "messageAiSendFlag": "DWS"}
+    assert DingTalkAdapter("dws")._message("c", item).bot

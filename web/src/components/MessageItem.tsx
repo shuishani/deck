@@ -125,7 +125,7 @@ export const MessageItem = forwardRef<
       <div className={clsx('relative flex min-w-0 flex-col', variant === 'chat' ? 'max-w-[min(40rem,82%)]' : 'flex-1', mine && 'items-end')}>
         {!compact && !mine && (
           <header className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 leading-5">
-            <span className="text-fs13 font-semibold">{message.sender_name || '未知'}</span>
+            <span className="text-fs13 font-semibold">{message.is_me ? '我' : message.sender_name || '未知'}</span>
             <time className="text-fs12 text-stone-400 tabular-nums" title={fullTime(message.sent_at)}>
               {clock(message.sent_at)}
             </time>

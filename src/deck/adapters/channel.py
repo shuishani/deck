@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..runner import Runner, ToolError, run_json
-from .base import Conversation, Message
+from .base import ChatState, Conversation, Message, parse_time
 
 _PAGE = 50
 _MAX_PAGES = 20
@@ -34,6 +34,21 @@ class ChannelAdapter:
         if len(hits) != 1:
             raise ToolError(f"channel 中未找到唯一名为「{query}」的频道（匹配 {len(hits)} 个）")
         return Conversation(self.source, hits[0]["id"], hits[0].get("name", ""))
+
+    def chats(self, mine: set[str]) -> list[ChatState]:
+        data = self._run([self._drlee, "--json", "channel", "list"])
+        result = []
+        for channel in _items(data["data"]):
+            direct = channel.get("type") == "dm"
+            name = channel.get("name", "")
+            if direct:
+                # 私信的 name 是内部编号，用对方的名字。
+                others = [m.get("display_name", "") for m in channel.get("member_previews") or [] if m.get("id") not in mine]
+                name = "、".join(n for n in others if n) or name
+            result.append(ChatState(Conversation(self.source, channel["id"], name), direct,
+                                    parse_time(channel.get("last_message_created_at")),
+                                    read_until=parse_time(channel.get("last_read_message_created_at"))))
+        return result
 
     def fetch(
         self, conversation: str, cursor: str | None
@@ -134,6 +149,10 @@ class ChannelAdapter:
             sent_at=datetime.fromisoformat(item["created_at"]).astimezone(timezone.utc),
             reply_to=item.get("thread_root_id"),
             raw=item,
+            # Dr. Lee 等 agent，以及拍档代真人自动发的（界面上是「用户说」）。
+            bot=item.get("sender_kind") == "agent" or any(
+                isinstance(b, dict) and b.get("type") == "ai_assisted" and b.get("automatic")
+                for b in item.get("blocks") or []),
         )
 
 

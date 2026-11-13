@@ -5,10 +5,11 @@ import time
 from collections import deque
 from collections.abc import Callable
 
+from .adapters import SOURCES
 from .adapters import adapter_for as default_adapter_for
 from .config import Config, current
 from .store import Store
-from .sync import sync
+from .sync import refresh_chats, sync
 
 # 钉钉有实时监听，轮询只是补漏。
 DINGTALK_POLL_SECONDS = 300
@@ -23,9 +24,11 @@ class Watcher:
         config: Config,
         sync_one: Callable[[int], None] | None = None,
         popen: Callable[..., subprocess.Popen] = subprocess.Popen,
+        refresh_chats: Callable[[], list[int]] | None = None,
     ):
         self.config = config
         self._sync_one = sync_one or self._default_sync
+        self._refresh_chats = refresh_chats or self._default_refresh_chats
         self._popen = popen
         self._stop = threading.Event()
         # 停止或设置变化（如暂停平台）时叫醒主循环，不必等到下一轮轮询。
@@ -73,6 +76,22 @@ class Watcher:
         with lock:
             self._sync_one(id)
 
+    def _default_refresh_chats(self) -> list[int]:
+        store = Store(self.config.db_path, via="watcher")
+        due = []
+        try:
+            paused = store.paused_sources()
+            for source in SOURCES:
+                if source in paused:
+                    continue
+                try:
+                    due += refresh_chats(store, default_adapter_for(source, self.config))
+                except Exception as error:  # noqa: BLE001 - 一个平台查不到单聊，不影响群的监听
+                    print(f"deck: 读取{source}会话列表失败：{error}", file=sys.stderr)
+        finally:
+            store.close()
+        return due
+
     def _default_sync(self, id: int) -> None:
         store = Store(self.config.db_path, via="watcher")
         try:
@@ -91,7 +110,9 @@ class Watcher:
                     # 设置损坏时沿用上一份配置继续监听，不让线程退出。
                     print(f"deck: 运行设置无效，沿用当前配置：{error}", file=sys.stderr)
                 paused = store.paused_sources()
-                rows = [row for row in store.conversations() if row["source"] not in paused]
+                # 单聊不逐个轮询：每轮查一次会话列表，只同步有新消息的。
+                rows = [row for row in store.conversations()
+                        if row["source"] not in paused and row["mode"] != "off" and row["chat"] == "group"]
             finally:
                 store.close()
             self._reconcile(rows)
@@ -103,6 +124,10 @@ class Watcher:
                 realtime = self.status(row["id"])[0] == "realtime"
                 if row["source"] != "dingtalk" or dingtalk_due or not realtime:
                     self.sync_conversation(row["id"])
+            for id in self._refresh_chats():
+                if self._stop.is_set():
+                    break
+                self.sync_conversation(id)
             if dingtalk_due:
                 last_dingtalk_poll = now
             self._wake.wait(self.config.poll_seconds)

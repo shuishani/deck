@@ -2,7 +2,7 @@
 import threading
 import time
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 from web_support import NOW, FakeProc, _fill, _msg
@@ -56,9 +56,40 @@ def test_group_rules_only_filter_attention_not_messages(api, store, config):
     rules.update(quiet_start="00:00", quiet_end="00:00")
     assert api("POST", "/api/groups/1/rules", rules, w)[0] == 200
     assert attention(store, config, now=NOW) == []
-    rules.update(quiet_start=None, quiet_end=None, scope="all")
+    rules.update(quiet_start=None, quiet_end=None, scope="off")
+    assert api("POST", "/api/groups/1/rules", rules, w)[0] == 200
+    assert attention(store, config, now=NOW) == []
+    rules.update(scope="all")
     api("POST", "/api/groups/1/rules", rules, w)
     assert len(attention(store, config, now=NOW)) == 3
+    # 禁用：不再拉取、不进待处理，消息保留；恢复后照常。
+    assert api("POST", "/api/groups/1/mode", {"mode": "off"}, w)[1]["group"]["watch"]["mode"] == "off"
+    assert attention(store, config, now=NOW) == [] and len(store.timeline()) == 4
+    assert api("POST", "/api/sync", {}, w)[1]["results"] == []
+    assert api("POST", "/api/groups/1/mode", {"mode": "bad"}, w)[0] == 400
+    api("POST", "/api/groups/1/mode", {"mode": "listen"}, w)
+    assert len(attention(store, config, now=NOW)) == 3
+
+
+def test_direct_chat_needs_reply_until_i_answer(store, config):
+    with store.db:
+        store.db.execute("UPDATE conversations SET chat = 'direct'")
+    _fill(store, [_msg("old", "OTHER", "上周的事", 60 * 24 * 4), _msg("ask", "OTHER", "在吗", 30)])
+    assert [(a.message["remote_id"], a.reason) for a in attention(store, config, now=NOW)] == [("ask", "mention")]
+    _fill(store, [_msg("answer", "ME", "在", 20)])
+    assert attention(store, config, now=NOW) == []
+
+
+def test_agents_and_messages_read_on_the_platform_do_not_need_me(store, config):
+    agent = replace(_msg("agent", "BOT2", "@李涛 我是 AI 助手", 15), bot=True)
+    _fill(store, [_msg("me", "ME", "你好", 60), agent, _msg("q1", "OTHER", "@李涛 看下", 10),
+                  _msg("q2", "OTHER", "@李涛 还有这个", 5)])
+    assert [a.message["remote_id"] for a in attention(store, config, now=NOW)] == ["q1", "q2"]
+    store.set_seen(1, NOW - timedelta(minutes=10))
+    assert [a.message["remote_id"] for a in attention(store, config, now=NOW)] == ["q2"]
+    with store.db:
+        store.db.execute("UPDATE conversations SET read_at = NULL")
+    assert store.unread_counts()[1] == 1
 
 
 @pytest.mark.parametrize("rules", [
@@ -77,14 +108,17 @@ def test_attention_mentions_and_issues_until_handled(store, config):
         _msg("a1", "ME", "好的", 200),
         _msg("chat", "OTHER", "大家好", 100),
         _msg("bug", "OTHER", "上传一直失败，怎么回事", 95),
-        _msg("bot", "BOT", "排版反馈已收到 @李涛 失败", 90),
+        replace(_msg("bot", "BOT", "排版反馈已收到 @李涛 失败", 90), bot=True),
         _msg("q3", "OTHER", "@李涛 再看下", 30),
     ])
     items = attention(store, config, now=NOW)
     # 我之后说过话不算处理：没引用回复、没标记，就还在。
     assert [(a.message["remote_id"], a.reason) for a in items] == [
         ("q1", "mention"), ("bug", "issue"), ("q3", "mention")]
-    assert [a.overdue for a in items] == [True, False, False]
+    # 超时跟推送级别「高」：默认不推送就不标；设了等待时间，超过才标。
+    assert not any(a.overdue for a in items)
+    store.set_setting("notify", {"levels": {"high": {"work": 120, "off": 120}}})
+    assert [a.overdue for a in attention(store, config, now=NOW)] == [True, False, False]
     store.set_handled(items[0].message["id"], True)
     assert [a.message["remote_id"] for a in attention(store, config, now=NOW)] == ["bug", "q3"]
 
@@ -114,7 +148,7 @@ def test_listener_event_triggers_sync_of_that_group(store, config):
         return FakeProc(['{"type":"user_im_message_receive_group"}\n'],
                         ["[event] ready event_count=1\n"])
 
-    watcher = Watcher(config, sync_one=synced.append, popen=popen)
+    watcher = Watcher(config, sync_one=synced.append, popen=popen, refresh_chats=lambda: [])
     watcher.start()
     try:
         assert started.wait(5)
@@ -182,7 +216,7 @@ def test_read_and_handled(api, store):
 def test_paused_source_is_neither_listened_nor_polled(store, config):
     store.set_source_paused("dingtalk", True)
     synced, started = [], []
-    watcher = Watcher(config, sync_one=synced.append, popen=lambda argv, **_: started.append(argv))
+    watcher = Watcher(config, sync_one=synced.append, popen=lambda argv, **_: started.append(argv), refresh_chats=lambda: [])
     watcher.start()
     time.sleep(0.3)
     watcher.stop()

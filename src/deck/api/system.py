@@ -2,7 +2,7 @@
 from .. import actions, ai, logview
 from .. import config as config_module
 from ..adapters import MARKS_AI, SOURCES
-from . import int_arg, op, required_int, shapes
+from . import bool_arg, int_arg, op, required_int, shapes
 
 
 @op("version", "GET", r"/api/version", "read",
@@ -17,12 +17,12 @@ def _editable(config) -> dict:
     return {k: getattr(config, k) for k in config_module.EDITABLE}
 
 
-@op("config.get", "GET", r"/api/config", "read", "可调整的设置、config.toml 中的默认值，以及改过哪些")
+@op("config.get", "GET", r"/api/config", "read", "可调整的设置、config.toml 中的默认值、改过哪些，以及 AI 是否可用")
 def get_config(ctx, args):
     return {**_editable(ctx.config),
             "defaults": config_module.file_defaults(ctx.config.home),
             "overridden": sorted(ctx.store.setting("runtime_config")),
-            "marks_ai": sorted(MARKS_AI), "sources": list(SOURCES)}
+            "marks_ai": sorted(MARKS_AI), "sources": list(SOURCES), "ai_ready": ai.ready(ctx.store)}
 
 
 @op("config.update", "POST", r"/api/config", "write", "修改设置；reset 列出要恢复默认的项")
@@ -33,12 +33,16 @@ def update_config(ctx, args):
     return {"config": _editable(ctx.config)}
 
 
-@op("log.query", "GET", r"/api/log", "read", "操作日志：可按类别、失败、执行者、关键词、时间筛选")
+@op("log.query", "GET", r"/api/log", "read", "操作日志：可按类别、失败、执行者、关键词、时间筛选",
+    params={"category": "string 类别 id（返回的 categories 里有）", "failed": "boolean 只看失败的",
+            "actor": "string 执行者：me 或 ai", "q": "string 关键词", "since": "string 起始时间（ISO 格式）",
+            "before": "integer 日志 id，取比它更早的", "limit": "integer 条数，默认 50",
+            "noise": "boolean 包含已读、同步等日常记录，默认 true"})
 def query_log(ctx, args):
     rows, more = logview.query(
-        ctx.store, category=args.get("category") or None, failed=str(args.get("failed")) == "1",
+        ctx.store, category=args.get("category") or None, failed=bool_arg(args, "failed"),
         actor=args.get("actor") or None, search=str(args.get("q", "")), since=args.get("since") or None,
-        before=int_arg(args, "before"), limit=int_arg(args, "limit", 50), noise=str(args.get("noise")) != "0")
+        before=int_arg(args, "before"), limit=int_arg(args, "limit", 50), noise=bool_arg(args, "noise", True))
     describe = logview.Describer(ctx.store)
     return {"entries": [describe(r) for r in rows], "has_more": more,
             "categories": [{"id": k, "label": v[0]} for k, v in logview.CATEGORIES.items()]}

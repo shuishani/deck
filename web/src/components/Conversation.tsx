@@ -30,7 +30,7 @@ function continues(previous: Message | undefined, message: Message) {
 
 
 export function Conversation({ group, onBack, focus, anchored }: { group: GroupInfo; onBack?: () => void; focus?: number; anchored?: boolean }) {
-  const { versions, groups } = useData()
+  const { versions, groups, config } = useData()
   const { openReply, clearReply, openTask, bump, setPicking } = useActions()
   const { reply: draft, picking } = useUi()
   const toast = useToast()
@@ -316,7 +316,7 @@ export function Conversation({ group, onBack, focus, anchored }: { group: GroupI
                     onJump={jump}
                     onEdit={startEdit}
                     onRetract={setRetracting}
-                    onDraft={drafting ? undefined : draftReply}
+                    onDraft={config?.ai_ready && !drafting ? draftReply : undefined}
                     onPick={pick}
                     picking={!!picking}
                     picked={!!picking?.some((m) => m.id === message.id)}

@@ -35,6 +35,8 @@ const PAGES = [
   { name: 'log', hash: '#/log' },
   { name: 'settings-connections', hash: '#/settings' },
   { name: 'settings-reminders', hash: '#/settings/reminders' },
+  { name: 'settings-chats', hash: '#/settings', act: (page) => page.getByRole('tab', { name: /单聊/ }).click() },
+  { name: 'settings-chat-dialog', hash: '#/settings', act: (page) => page.locator('#chats').getByRole('button', { name: /客户A 项目群/ }).first().click() },
   { name: 'settings-ai', hash: '#/settings/ai' },
   { name: 'settings-access', hash: '#/settings/access' },
 ]

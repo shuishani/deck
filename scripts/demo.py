@@ -16,7 +16,7 @@ from pathlib import Path
 from deck import actions
 from deck import config as config_module
 from deck.adapters.base import Conversation, Message
-from deck.store import Store
+from deck.store import PERSONAL, Store
 
 ME = "李明"
 NOW = datetime.now(timezone.utc)
@@ -147,6 +147,16 @@ def build(home: Path, port: int) -> None:
         store.db.commit()
         row = store.db.execute("SELECT MIN(id) FROM messages WHERE conversation = ?", (id,)).fetchone()[0]
         first_ids.append(row)
+
+    # 单聊：一条等我回复，一条我已回，一个只监听。
+    for i, (source, name, mode) in enumerate((("dingtalk", "王芳", "ai"), ("dingtalk", "刘洋", "listen"),
+                                               ("channel", "陈静", "listen"))):
+        remote = f"demo-dm-{i}"
+        id = store.add_conversation(PERSONAL, Conversation(source, remote, name), chat="direct", mode=mode)
+        store.add_messages(id, [
+            message(source, remote, 0, name, "在吗？登录页又白屏了，能帮忙看下吗", NOW - timedelta(minutes=25 + i * 90)),
+            *([message(source, remote, 1, name, "好的，我看下", NOW - timedelta(minutes=10), mine=True)] if i == 1 else []),
+        ], {"me"})
 
     tasks = [
         ("修复上传附件失败", "mx", "doing", "urgent", (NOW + timedelta(days=1)).date(), [first_ids[0], first_ids[2]]),

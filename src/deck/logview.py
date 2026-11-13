@@ -26,6 +26,10 @@ LABELS = {
     "group.kind": "设置群类型",
     "group.move": "调整群所属项目",
     "group.rules": "修改群提醒规则",
+    "group.mode": "修改会话状态",
+    "notify.settings": "修改推送设置",
+    "notify.webhook": "保存推送机器人",
+    "notify.test": "发送推送测试",
     "source.pause": "暂停平台监听",
     "source.resume": "恢复平台监听",
     "config.update": "修改消息与提醒设置",
@@ -48,7 +52,7 @@ CATEGORIES = {
     "group": ("群与项目", ("group.", "project.")),
     "ai": ("AI", ("ai.",)),
     "access": ("访问", ("access.",)),
-    "system": ("监听与设置", ("source.", "config.", "message.prune")),
+    "system": ("监听与设置", ("source.", "config.", "notify.", "message.prune")),
 }
 
 # 数量多、价值低，网页默认不显示。
@@ -152,6 +156,6 @@ class Describer:
             if not label:
                 label = f"设备 #{target}" if target.isdigit() else target
             return {"kind": "device", "id": None, "label": label}
-        if action in ("config.update", "ai.settings"):
+        if action in ("config.update", "ai.settings") or action.startswith("notify."):
             return {"kind": "none", "id": None, "label": "设置"}
         return {"kind": "none", "id": None, "label": target}

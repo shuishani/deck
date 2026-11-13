@@ -6,7 +6,6 @@ import socket
 import sqlite3
 import ssl
 from http import HTTPStatus
-from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
@@ -158,13 +157,12 @@ class _Handler(BaseHTTPRequestHandler):
         return cookie + "; Secure" if self._https() else cookie
 
     def _cookie(self) -> str | None:
-        jar = SimpleCookie()
-        try:
-            jar.load(self.headers.get("Cookie", ""))
-        except Exception:  # noqa: BLE001 - 坏的 Cookie 头当作没登录
-            return None
-        morsel = jar.get(self._cookie_name)
-        return morsel.value if morsel else None
+        # 不用 SimpleCookie：同主机其他服务的 Cookie 只要有一个不规范，它会把后面的全部丢掉，看起来像掉了登录。
+        for part in self.headers.get("Cookie", "").split(";"):
+            name, sep, value = part.strip().partition("=")
+            if sep and name == self._cookie_name:
+                return value.strip() or None
+        return None
 
     def _https(self) -> bool:
         if self.tls:

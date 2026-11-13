@@ -17,7 +17,9 @@ def project(row) -> dict:
 
 
 def group(ctx, row, paused: set[str]) -> dict:
-    if row["source"] in paused:
+    if row["mode"] == "off":
+        mode, error = "off", None
+    elif row["source"] in paused:
         mode, error = "paused", None
     else:
         mode, listen_error = ctx.watcher.status(row["id"]) if ctx.watcher else ("poll", None)
@@ -25,6 +27,7 @@ def group(ctx, row, paused: set[str]) -> dict:
     return {
         "id": row["id"], "project": row["project"], "source": row["source"],
         "name": row["name"], "kind": row["kind"], "remote_id": row["remote_id"],
+        "mode": row["mode"], "chat": row["chat"],
         "added_at": row["added_at"], "rules": rules.decode(row["rules"]),
         "watch": {"mode": mode, "last_sync_at": row["last_sync_at"], "error": error},
     }
@@ -41,7 +44,7 @@ def overview(ctx) -> dict:
     store = ctx.store
     midnight = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
     stats = store.group_stats(midnight)
-    unread = store.unread_counts(tuple(ctx.config.ignore_senders))
+    unread = store.unread_counts()
     paused = store.paused_sources()
     counts: dict[tuple[int, str], int] = {}
     for item in attention(store, ctx.config):

@@ -75,8 +75,8 @@ test('时间线支持 around 定位', async (t) => {
 
 test('AI 设置只提交环境变量名，不含明文密钥字段', async (t) => {
   const calls = stubFetch(t, { settings: {} })
-  await api.updateAiSettings({ enabled: true, api_key_env: 'DECK_AI_KEY' })
-  assert.deepEqual(JSON.parse(calls[0].options.body), { enabled: true, api_key_env: 'DECK_AI_KEY' })
+  await api.updateAiSettings({ enabled: true, api_key_keychain: 'deck-ai' })
+  assert.deepEqual(JSON.parse(calls[0].options.body), { enabled: true, api_key_keychain: 'deck-ai' })
 })
 
 test('AI 起草与预览携带附件 ID，确认发送仍只带 operation_id', async (t) => {

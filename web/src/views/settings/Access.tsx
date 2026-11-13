@@ -10,6 +10,9 @@ import { copyText } from '../../clipboard'
 import { fullTime, relative, shortTime } from '../../format'
 import { useLoad } from '../../state'
 
+// 手机上只显示图标：放大到可点的尺寸，文字留给读屏。
+const DEVICE_ACTION = 'max-sm:size-10 max-sm:px-0'
+
 export function Access() {
   const toast = useToast()
   const { data, error, loading, reload } = useLoad(() => api.access(), [])
@@ -140,26 +143,26 @@ export function Access() {
                 </p>
               </button>
               {session.current ? (
-                <Button variant="ghost" size="sm" onClick={() => setLoggingOut(true)} className="text-stone-500">
-                  <LogOut className="size-3.5" />
-                  <span className="max-sm:hidden">退出登录</span>
+                <Button variant="ghost" size="sm" onClick={() => setLoggingOut(true)} className={clsx(DEVICE_ACTION, 'text-stone-500')}>
+                  <LogOut className="size-3.5 max-sm:size-4" />
+                  <span className="max-sm:sr-only">退出登录</span>
                 </Button>
               ) : (
                 <>
                   {session.disabled_at ? (
-                    <Button variant="ghost" size="sm" onClick={() => void toggle(session)} disabled={busy}>
-                      <CircleCheck className="size-3.5" />
-                      <span className="max-sm:hidden">启用</span>
+                    <Button variant="ghost" size="sm" onClick={() => void toggle(session)} disabled={busy} className={DEVICE_ACTION}>
+                      <CircleCheck className="size-3.5 max-sm:size-4" />
+                      <span className="max-sm:sr-only">启用</span>
                     </Button>
                   ) : (
-                    <Button variant="ghost" size="sm" onClick={() => setDisabling(session)} className="text-stone-500 hover:text-amber-600">
-                      <Ban className="size-3.5" />
-                      <span className="max-sm:hidden">禁用</span>
+                    <Button variant="ghost" size="sm" onClick={() => setDisabling(session)} className={clsx(DEVICE_ACTION, 'text-stone-500 hover:text-amber-600')}>
+                      <Ban className="size-3.5 max-sm:size-4" />
+                      <span className="max-sm:sr-only">禁用</span>
                     </Button>
                   )}
-                  <Button variant="ghost" size="sm" onClick={() => setRemoving(session)} className="text-stone-500 hover:text-red-600">
-                    <Trash2 className="size-3.5" />
-                    <span className="max-sm:hidden">移除</span>
+                  <Button variant="ghost" size="sm" onClick={() => setRemoving(session)} className={clsx(DEVICE_ACTION, 'text-stone-500 hover:text-red-600')}>
+                    <Trash2 className="size-3.5 max-sm:size-4" />
+                    <span className="max-sm:sr-only">移除</span>
                   </Button>
                 </>
               )}
@@ -229,8 +232,8 @@ function Addresses({ addresses, primary, plan, onSaved }: { addresses: AccessAdd
         title="访问地址"
         description={
           primary.pinned
-            ? '这是固定入口。切 Wi-Fi 或 Tailscale 不换网址，网络恢复后自动重连，不重新登录。'
-            : '请先固定一个入口；当前只是候选地址，不代表远程网络已连通。'
+            ? '固定入口：切换 Wi-Fi 或 Tailscale 时无需更换地址，网络恢复后自动重连，无需重新登录。'
+            : '请先固定入口。当前为候选地址，不代表远程网络已连通。'
         }
       />
       <div className="space-y-3 rounded-xl border border-stone-200 bg-white px-4 py-3.5 dark:border-stone-800 dark:bg-stone-900">
@@ -263,7 +266,7 @@ function Addresses({ addresses, primary, plan, onSaved }: { addresses: AccessAdd
       {others.length > 0 && (
         <details className="group">
           <summary className="cursor-pointer text-fs12 text-stone-500 select-none hover:text-stone-700 dark:text-stone-400 dark:hover:text-stone-200">
-            网络诊断地址（不是切网入口，不要交替使用）
+            网络诊断地址（非统一入口，请勿交替使用）
           </summary>
           <ul className="mt-2 divide-y divide-stone-100 overflow-hidden rounded-xl border border-stone-200 bg-white dark:divide-stone-800 dark:border-stone-800 dark:bg-stone-900">
             {others.map((address) => (
@@ -292,13 +295,13 @@ function Addresses({ addresses, primary, plan, onSaved }: { addresses: AccessAdd
 function RemoteSetup({ plan }: { plan: EntryPlan }) {
   return (
     <div className="space-y-2 rounded-lg bg-stone-50 px-3 py-2.5 text-fs12 leading-relaxed text-stone-600 dark:bg-stone-950 dark:text-stone-300">
-      <p>同 Wi-Fi 时，无论手机是否开启 Tailscale，都使用上面的地址；外网开启 Tailscale 后也不换地址。</p>
+      <p>同一 Wi-Fi 下，无论手机是否开启 Tailscale，均使用上方地址；在外网开启 Tailscale 后也无需更换。</p>
       {!plan.running && <p className="text-amber-700 dark:text-amber-300">电脑 Tailscale 尚未运行，远程通路未就绪。</p>}
       {plan.remote === 'pending' ? (
-        <p>单主机路由 <span className="font-mono">{plan.route}</span> 已宣告、待批准。请在 Tailscale 管理后台批准并检查访问规则，未批准前不要按“已可远程访问”使用。</p>
+        <p>单主机路由 <span className="font-mono">{plan.route}</span> 已宣告、待批准。请在 Tailscale 管理后台批准并检查访问规则；批准前远程访问不可用。</p>
       ) : (
         <>
-          <p>{plan.routes_known ? '远程通路尚未配置。下面方案保留已有路由，只增加本机这个地址；请确认网络影响后在电脑执行，再到管理后台批准。' : '现有路由读取失败，不能把未知当成空配置；已禁止生成路由修改命令。'}</p>
+          <p>{plan.routes_known ? '远程通路尚未配置。以下命令保留已有路由，仅新增本机地址；请确认网络影响后在电脑上执行，再到管理后台批准。' : '读取现有路由失败，为避免覆盖已有配置，暂不生成路由修改命令。'}</p>
           {plan.command && <CopyRow label="宣告路由" value={plan.command} />}
           {plan.rollback_command && <CopyRow label="恢复原路由" value={plan.rollback_command} />}
         </>
@@ -397,7 +400,7 @@ function DeviceDialog({
       {off && primary && (
         <p className="mt-4 flex items-start gap-1.5 text-fs12 leading-relaxed text-amber-700 dark:text-amber-300">
           <ShieldAlert className="mt-0.5 size-3.5 shrink-0" />
-          这台设备不是用统一地址登录的。请在设备上打开 {displayUrl(primary.url)} 重新登录（通过「添加设备」扫码），之后可移除这条旧登录。
+          该设备未通过统一地址登录。请在设备上打开 {displayUrl(primary.url)}，通过「添加设备」扫码重新登录，之后可移除此旧登录。
         </p>
       )}
     </Dialog>

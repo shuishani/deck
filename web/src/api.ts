@@ -29,7 +29,8 @@ export interface Task {
 export type TaskInput = Partial<Pick<Task, 'title' | 'description' | 'project' | 'status' | 'priority' | 'due' | 'source'>>
 
 export interface WatchState {
-  mode: 'realtime' | 'poll' | 'paused'
+  /** off：会话已禁用 */
+  mode: 'realtime' | 'poll' | 'paused' | 'off'
   last_sync_at: string | null
   error: string | null
 }
@@ -124,7 +125,30 @@ export interface Group {
   added_at: string
   rules: GroupRules
   watch: WatchState
+  mode: ConversationMode
+  chat: 'group' | 'direct'
 }
+
+/** ai：监听并交给 AI；listen：只监听；off：禁用（不再拉取，保留消息） */
+export type ConversationMode = 'ai' | 'listen' | 'off'
+export type NotifyLevel = 'urgent' | 'high' | 'medium' | 'low'
+/** 消息多少分钟没读也没回就推送；null 不推送。work 上班时间，off 下班后。 */
+export type NotifyRule = { work: number | null; off: number | null }
+
+export interface NotifySettings {
+  enabled: boolean
+  levels: Record<NotifyLevel, NotifyRule>
+  /** 1 周一 … 7 周日 */
+  work_days: number[]
+  work_start: string
+  work_end: string
+  digest: boolean
+  digest_time: string
+  /** 钥匙串里有没有 Webhook / 加签密钥 */
+  webhook: boolean
+  signed: boolean
+}
+export type NotifyInput = Omit<NotifySettings, 'webhook' | 'signed'>
 
 export interface SyncResult {
   id: number
@@ -166,19 +190,19 @@ export interface Config {
   ai_prefix: string
   marks_ai: string[]
   retention_days: number
-  reply_reminder_hours: number
-  ignore_senders: string[]
   poll_seconds: number
   sources: Source[]
   /** config.toml 里的默认值；overridden 是网页或 CLI 改过的字段。 */
   defaults: Partial<SettingsInput>
   overridden: (keyof SettingsInput)[]
+  /** AI 已开启且配置完整；否则不显示 AI 入口 */
+  ai_ready: boolean
 }
 
-export type SettingsInput = Pick<Config, 'ai_prefix' | 'retention_days' | 'reply_reminder_hours' | 'ignore_senders' | 'poll_seconds'>
+export type SettingsInput = Pick<Config, 'ai_prefix' | 'retention_days' | 'poll_seconds'>
 
 export interface GroupRules {
-  scope: 'all' | 'mentions' | 'keywords'
+  scope: 'all' | 'mentions' | 'keywords' | 'off'
   keywords: string[]
   quiet_start: string | null
   quiet_end: string | null
@@ -256,8 +280,8 @@ export interface AiSettings {
   provider: 'openai-compatible'
   base_url: string
   model: string
-  /** 只保存环境变量名，密钥本身不经过浏览器 */
-  api_key_env: string
+  /** macOS 钥匙串条目名；密钥本身不经过浏览器 */
+  api_key_keychain: string
   monthly_token_budget: number
   max_output_tokens: number
   configured: boolean
@@ -268,7 +292,7 @@ export interface AiSettings {
 
 export type AiSettingsInput = Pick<
   AiSettings,
-  'enabled' | 'base_url' | 'model' | 'api_key_env' | 'monthly_token_budget' | 'max_output_tokens'
+  'enabled' | 'base_url' | 'model' | 'api_key_keychain' | 'monthly_token_budget' | 'max_output_tokens'
 >
 
 export interface AiReference {
@@ -450,7 +474,7 @@ export const api = {
   previewEdit: (id: number, text: string) =>
     request<{ preview: Preview }>('POST', `/messages/${id}/edit`, { text }),
   editMessage: (id: number, text: string) => request<unknown>('POST', `/messages/${id}/edit`, { text, confirm: true }),
-  retract: (id: number) => request<unknown>('POST', `/messages/${id}/retract`),
+  retract: (id: number) => request<unknown>('POST', `/messages/${id}/retract`, { confirm: true }),
   message: (id: number) => request<{ message: Message }>('GET', `/messages/${id}`),
   markRead: (group: number) => request<unknown>('POST', `/groups/${group}/read`),
   projects: () => request<{ projects: Project[] }>('GET', '/projects'),
@@ -465,6 +489,11 @@ export const api = {
     request<{ id: number; name: string }>('POST', '/groups', body),
   removeGroup: (id: number) => request<unknown>('DELETE', `/groups/${id}`),
   setGroupKind: (id: number, kind: GroupKind) => request<unknown>('POST', `/groups/${id}/kind`, { kind }),
+  setGroupMode: (id: number, mode: ConversationMode) => request<unknown>('POST', `/groups/${id}/mode`, { mode }),
+  notify: () => request<{ settings: NotifySettings }>('GET', '/notify'),
+  updateNotify: (body: Partial<NotifyInput>) => request<{ settings: NotifySettings }>('POST', '/notify', body),
+  setWebhook: (url: string, secret: string) => request<{ settings: NotifySettings }>('POST', '/notify/webhook', { url, secret }),
+  testNotify: () => request<unknown>('POST', '/notify/test'),
   tasks: () => request<{ tasks: Task[] }>('GET', '/tasks'),
   addTask: (body: TaskInput & { message_ids?: number[] }) => request<{ task: Task }>('POST', '/tasks', body),
   updateTask: (id: number, body: TaskInput) => request<{ task: Task }>('POST', `/tasks/${id}`, body),

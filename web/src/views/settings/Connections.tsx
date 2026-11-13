@@ -3,27 +3,35 @@ import { AlertTriangle, ChevronDown, ChevronRight, Plus, RefreshCw } from 'lucid
 import { useState, type ReactNode } from 'react'
 import { api, type Source, type SourceHealth } from '../../api'
 import { ErrorBar } from '../../components/Feedback'
-import { numberInput } from '../../components/SettingsLayout'
+import { SectionHeader, numberInput, useSettingsSave } from '../../components/SettingsLayout'
 import { SourceBadge, watchTone } from '../../components/SourceBadge'
 import { useToast } from '../../components/Toast'
 import { Switch } from '../../components/ui'
 import { shortTime, shortVersion } from '../../format'
 import { PLATFORMS, type Platform } from '../../platforms'
-import { href } from '../../router'
 import { useLoad, type GroupInfo, useActions, useData } from '../../state'
+import { GroupList } from './Chats'
+import { Retention } from './Retention'
 
-/** 设置 → 连接：各平台的登录状态、监听状态和命令行工具。 */
-export function Connections() {
-  const { groups, versions } = useData()
+/** 设置 → 会话：deck 从哪些平台拉哪些会话、多久拉一次、存多久。 */
+export function Connections({ source }: { source?: Source }) {
+  const { groups, versions, config } = useData()
   const { bump } = useActions()
   const toast = useToast()
   const sources = useLoad(() => api.sources(), [versions.health, versions.config])
   const paused = new Set(sources.data?.sources.filter((s) => s.paused).map((s) => s.source))
+  // 点平台卡片上的「监测 N 个群」：列表按这个平台筛选并滚过去。
+  const [picked, setPicked] = useState<{ source?: Source; at: number }>({ source, at: 0 })
+
+  function showChats(source: Source) {
+    setPicked({ source, at: Date.now() })
+    requestAnimationFrame(() => document.getElementById('chats')?.scrollIntoView({ behavior: 'smooth' }))
+  }
 
   async function toggle(source: Source, name: string, pause: boolean) {
     try {
       await api.setSourcePaused(source, pause)
-      toast(pause ? `已暂停监听：${name}。恢复后会补齐期间的消息` : `已恢复监听：${name}`)
+      toast(pause ? `已暂停 ${name} 监听，恢复后将补齐期间的消息` : `已恢复 ${name} 监听`)
       bump()
     } catch (err) {
       toast(err instanceof Error ? err.message : String(err), 'error')
@@ -31,9 +39,15 @@ export function Connections() {
   }
 
   return (
-    <div className="space-y-3">
-      {sources.error && <ErrorBar message={sources.error} onRetry={sources.reload} />}
-      <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
+    <div className="space-y-8">
+      <section>
+      <SectionHeader title="平台" description="暂停监听后不再接收新消息，仍可发送；恢复后将补齐暂停期间的消息。" />
+      {sources.error && (
+        <div className="mb-3">
+          <ErrorBar message={sources.error} onRetry={sources.reload} />
+        </div>
+      )}
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         {Object.values(PLATFORMS).map((platform) => (
           <PlatformCard
             key={platform.source}
@@ -43,6 +57,8 @@ export function Connections() {
             loaded={!!sources.data}
             onToggle={(pause) => toggle(platform.source, platform.name, pause)}
             groups={groups.filter((g) => g.source === platform.source)}
+            pollSeconds={config?.poll_seconds}
+            onShowChats={() => showChats(platform.source)}
           />
         ))}
         <div className="flex min-h-48 flex-col items-center justify-center rounded-xl border border-dashed border-stone-300 p-5 text-center text-stone-400 dark:border-stone-700">
@@ -50,16 +66,63 @@ export function Connections() {
             <Plus className="size-4" />
           </span>
           <p className="mt-2 font-medium text-stone-500">接入新平台</p>
-          <p className="mt-1 text-fs12">以后：飞书、GitHub、Plane…</p>
+          <p className="mt-1 text-fs12">计划支持：飞书、GitHub、Plane</p>
         </div>
       </div>
+      </section>
+      <GroupList key={picked.at} initialSource={picked.source} />
+      <Retention />
     </div>
   )
 }
 
+/** 拉取间隔：存的是秒，这里按分钟填；所有平台共用。 */
+function PollMinutes({ seconds }: { seconds: number }) {
+  const [value, setValue] = useState<string | null>(null)
+  const { save, busy } = useSettingsSave()
+  const toast = useToast()
+  const shown = value ?? String(Math.round((seconds / 60) * 10) / 10)
+
+  async function commit() {
+    if (value === null) return
+    const minutes = Number(value)
+    if (!value.trim() || !Number.isFinite(minutes) || minutes < 0.5 || minutes > 60) {
+      toast('拉取间隔须为 0.5～60 分钟', 'error')
+      setValue(null)
+      return
+    }
+    const next = Math.round(minutes * 60)
+    if (next === seconds || (await save({ poll_seconds: next }, '拉取间隔已保存'))) setValue(null)
+  }
+
+  return (
+    <label className="inline-flex items-center gap-1.5" title="所有平台共用；钉钉实时推送中断时也按这个间隔拉取">
+      每
+      <input
+        type="number"
+        inputMode="decimal"
+        min="0.5"
+        max="60"
+        step="0.5"
+        value={shown}
+        disabled={busy}
+        onChange={(event) => setValue(event.target.value)}
+        onBlur={() => void commit()}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') event.currentTarget.blur()
+          if (event.key === 'Escape') setValue(null)
+        }}
+        aria-label="拉取间隔（分钟）"
+        className={clsx(numberInput, '!h-7 !w-16')}
+      />
+      分钟拉取
+    </label>
+  )
+}
+
 const STATE = {
-  realtime: { label: '实时监听', tone: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300', dot: 'bg-emerald-500' },
-  poll: { label: '定时拉取', tone: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300', dot: 'bg-emerald-500' },
+  realtime: { label: '监听中', tone: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300', dot: 'bg-emerald-500' },
+  poll: { label: '监听中', tone: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300', dot: 'bg-emerald-500' },
   error: { label: '异常', tone: 'bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-300', dot: 'bg-red-500' },
   paused: { label: '已暂停', tone: 'bg-stone-100 text-stone-500 dark:bg-stone-800 dark:text-stone-400', dot: 'bg-stone-400' },
   idle: { label: '未使用', tone: 'bg-stone-100 text-stone-500 dark:bg-stone-800 dark:text-stone-400', dot: 'bg-stone-400' },
@@ -75,12 +138,16 @@ function PlatformCard({
   paused,
   loaded,
   onToggle,
+  pollSeconds,
+  onShowChats,
 }: Platform & {
   groups: GroupInfo[]
   health?: SourceHealth
   paused: boolean
   loaded: boolean
   onToggle: (pause: boolean) => void
+  pollSeconds?: number
+  onShowChats: () => void
 }) {
   const { bump } = useActions()
   const toast = useToast()
@@ -96,6 +163,8 @@ function PlatformCard({
     ...errors.map((g) => ({ key: `g${g.id}`, where: g.name, text: g.watch.error ?? '监听异常' })),
   ]
   const login = health ? { configured: '已登录', missing: '未登录', needs_login: '需重新登录', unknown: '登录状态未知' }[health.auth_state] : null
+  const interval = pollSeconds ? `每 ${Math.round((pollSeconds / 60) * 10) / 10} 分钟拉取` : '定时拉取'
+  const receive = polls ? (pollSeconds ? <PollMinutes seconds={pollSeconds} /> : interval) : groups.length && !paused && !realtime ? `推送中断，${interval}` : '实时推送'
 
   async function syncNow() {
     setSyncing(true)
@@ -135,7 +204,7 @@ function PlatformCard({
           </p>
         </div>
         {loaded && (
-          <span title={paused ? `恢复${name}监听` : `暂停${name}监听：不再接收新消息，仍可发送`}>
+          <span title={paused ? `恢复 ${name} 监听` : `暂停 ${name} 监听：不再接收新消息，仍可发送`}>
             <Switch checked={!paused} onChange={(on) => onToggle(!on)} label={<span className="sr-only">{name}监听</span>} />
           </span>
         )}
@@ -151,25 +220,25 @@ function PlatformCard({
 
       <div className={clsx('flex-1 space-y-3 px-4 pb-4', paused && 'opacity-60')}>
         {groups.length ? (
-          <a
-            href={href({ name: 'settings', tab: 'reminders', source })}
-            title="查看这些群的监听状态和提醒设置"
-            className="flex items-center gap-2 rounded-lg bg-stone-50 px-3 py-2 transition-colors hover:bg-stone-100 dark:bg-stone-800/50 dark:hover:bg-stone-800"
+          <button
+            onClick={onShowChats}
+            title="在下方会话列表里查看"
+            className="flex w-full items-center gap-2 text-left rounded-lg bg-stone-50 px-3 py-2 transition-colors hover:bg-stone-100 dark:bg-stone-800/50 dark:hover:bg-stone-800"
           >
             <span className="min-w-0 flex-1">
               <span className="block text-fs13 font-medium text-stone-800 dark:text-stone-100">
-                监测 {groups.length} 个群
+                监测 {groups.length} 个会话
                 {errors.length > 0 && <span className="text-red-600 dark:text-red-400"> · {errors.length} 个异常</span>}
               </span>
               <span className="block truncate text-fs12 text-stone-500">{groups.map((g) => g.name).join('、')}</span>
             </span>
             <ChevronRight className="size-4 shrink-0 text-stone-400" />
-          </a>
+          </button>
         ) : (
-          <p className="rounded-lg bg-stone-50 px-3 py-2 text-fs12 text-stone-500 dark:bg-stone-800/50">还没有监测的群，在项目里添加</p>
+          <p className="rounded-lg bg-stone-50 px-3 py-2 text-fs12 text-stone-500 dark:bg-stone-800/50">暂无监测的会话，群可在项目中添加</p>
         )}
         <dl className="space-y-1.5 border-t border-stone-100 pt-3 dark:border-stone-800">
-          {polls && <PollFact />}
+          <Fact label="接收方式">{receive}</Fact>
           <Fact label="命令行工具">
             <span className="font-mono text-fs12" title={health?.version || undefined}>
               {cli} {health ? shortVersion(health.version) : '…'}
@@ -210,12 +279,12 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 /** 常见错误给出处理办法；原文可展开。 */
 function hintFor(text: string, cli: string) {
   if (/upgrade required|cli_upgrade_required|upgrade to cli version/i.test(text))
-    return `${cli} 版本过低，平台要求升级。在运行 deck 的电脑上执行「${cli} update --confirm」（${cli} 的路径见 config.toml 的 [tools]），再点「同步」。`
+    return `${cli} 版本过低，平台要求升级。请在运行 deck 的电脑上执行「${cli} update --confirm」（路径见 config.toml 的 [tools]），然后点击「立即同步」。`
   if (/reauthentication_required|not logged in|unauthori[sz]ed|\b401\b|token.*expired|未登录|重新登录/i.test(text))
-    return `${cli} 需要重新登录。在运行 deck 的电脑上执行「${cli} auth login」（${cli} 的路径见 config.toml 的 [tools]）。`
-  if (/找不到 CLI|No such file|not found/i.test(text)) return `找不到 ${cli}，请检查 config.toml 里的工具路径。`
-  if (/timed? ?out|超时/i.test(text)) return '平台响应超时，deck 会自动重试；持续出现时检查网络。'
-  if (/监听断开/.test(text)) return '实时监听断开，deck 会自动重连，期间改为定时拉取，消息不会丢。'
+    return `${cli} 需要重新登录。请在运行 deck 的电脑上执行「${cli} auth login」（路径见 config.toml 的 [tools]）。`
+  if (/找不到 CLI|No such file|not found/i.test(text)) return `未找到 ${cli}，请检查 config.toml 中的工具路径。`
+  if (/timed? ?out|超时/i.test(text)) return '平台响应超时，deck 将自动重试；如持续出现，请检查网络。'
+  if (/监听断开/.test(text)) return '实时推送已中断，deck 将自动重连；期间改为定时拉取，消息不会丢失。'
   return null
 }
 
@@ -239,78 +308,5 @@ function Problem({ where, text, cli }: { where: string; text: string; cli: strin
         )}
       </div>
     </li>
-  )
-}
-
-function PollFact() {
-  const { config } = useData()
-  const { bump } = useActions()
-  const toast = useToast()
-  const [value, setValue] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  if (!config) return null
-  const parsed = Number(value)
-  const valid = Number.isInteger(parsed) && parsed >= 5 && parsed <= 3600
-
-  async function save(body: Parameters<typeof api.updateConfig>[0]) {
-    setBusy(true)
-    try {
-      await api.updateConfig(body)
-      toast('拉取间隔已保存')
-      setValue(null)
-      bump()
-    } catch (err) {
-      toast(err instanceof Error ? err.message : String(err), 'error')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <Fact label="拉取间隔">
-      {value === null ? (
-        <span className="flex flex-wrap items-center justify-end gap-x-2.5 gap-y-1">
-          每 {config.poll_seconds} 秒
-          <button onClick={() => setValue(String(config.poll_seconds))} className="text-fs12 text-accent-700 hover:underline dark:text-accent-500">
-            修改
-          </button>
-          {config.overridden.includes('poll_seconds') && (
-            <button onClick={() => void save({ reset: ['poll_seconds'] })} disabled={busy} className="text-fs12 text-stone-500 hover:underline">
-              恢复默认 {config.defaults.poll_seconds ?? 30} 秒
-            </button>
-          )}
-        </span>
-      ) : (
-        <span className="flex flex-wrap items-center justify-end gap-1.5">
-          <input
-            type="number"
-            inputMode="numeric"
-            min="5"
-            max="3600"
-            value={value}
-            autoFocus
-            onChange={(event) => setValue(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && valid) void save({ poll_seconds: parsed })
-              if (event.key === 'Escape') setValue(null)
-            }}
-            aria-label="拉取间隔（秒）"
-            aria-invalid={!valid}
-            className={clsx(numberInput, !valid && '!border-red-400')}
-          />
-          <span className="text-stone-500">秒</span>
-          <button onClick={() => setValue(null)} disabled={busy} className="h-7 rounded-md px-2 text-fs12 text-stone-600 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800">
-            取消
-          </button>
-          <button
-            onClick={() => void save({ poll_seconds: parsed })}
-            disabled={busy || !valid}
-            className="h-7 rounded-md bg-accent-600 px-2.5 text-fs12 font-medium text-white hover:bg-accent-700 disabled:opacity-50"
-          >
-            保存
-          </button>
-        </span>
-      )}
-    </Fact>
   )
 }

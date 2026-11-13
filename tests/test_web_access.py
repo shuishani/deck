@@ -22,6 +22,13 @@ def test_everything_but_login_needs_a_session(server, store):
     assert "HttpOnly" in client.last_set_cookie and "SameSite=Strict" in client.last_set_cookie
     assert client("GET", "/api/auth") == (200, {"authenticated": True, "password": False})
     assert client("GET", "/api/overview")[0] == 200
+    # 同主机其他服务的 Cookie 不规范，也不能把 deck 的登录弄丢。
+    own = client.cookie
+    client.cookie = f'theme={{"a":1}}; x=a b; a[b]=1; {own}'
+    assert client("GET", "/api/auth")[1]["authenticated"]
+    client.cookie = own
+    assert client.login(store)[0] == 200 and client.cookie != own
+    assert len(access.sessions(store)) == 1
 
 
 def test_network_change_keeps_the_same_device_session(api, store):

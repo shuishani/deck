@@ -12,7 +12,7 @@ export interface Platform {
   example: string
   /** 以 AI 身份发送时，平台上显示的标注。 */
   aiMark: string
-  /** 定时拉取（可调拉取间隔）；否则是实时推送为主。 */
+  /** 只能定时拉取；否则以实时推送为主，推送中断时定时拉取。 */
   polls: boolean
   /** 平台图标配色。 */
   tone: string

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..runner import Runner, ToolError, run_json
-from .base import Conversation, Message
+from .base import ChatState, Conversation, Message, parse_time
 
 _PAGE = 50
 _MAX_PAGES = 20
@@ -33,6 +33,19 @@ class DingTalkAdapter:
             raise ToolError(f"钉钉中未找到唯一名为「{query}」的群（匹配 {len(hits)} 个）")
         group = hits[0]
         return Conversation(self.source, group["conversationId"], group.get("name", ""))
+
+    def chats(self, mine: set[str]) -> list[ChatState]:
+        # 只按 p2p 过滤会漏掉第一页之后的单聊，所以连群一起取全再筛。
+        data = self._run([self._dws, "chat", "+chat-list", "--types", "group,p2p", "--page-all",
+                          "--page-limit", "20", "-f", "json"])
+        result = []
+        for chat in data.get("chats", []):
+            last = parse_time(chat.get("lastMsgCreateAt"))
+            unread = chat.get("unreadPoint") or 0
+            result.append(ChatState(Conversation(self.source, chat["openConversationId"], chat.get("name", "")),
+                                    chat.get("conversationType") == "direct", last,
+                                    read_until=None if unread else last, unread=unread))
+        return result
 
     def fetch(
         self, conversation: str, cursor: str | None
@@ -160,6 +173,7 @@ class DingTalkAdapter:
             sent_at=_local_to_utc(item["createTime"]),
             reply_to=(item.get("quotedMessage") or {}).get("messageId"),
             raw=item,
+            bot=bool(item.get("messageAiSendFlag")),
         )
 
 

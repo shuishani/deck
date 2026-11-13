@@ -29,6 +29,9 @@ def login(ctx, args):
     if not token:
         http.limiter.fail(ip)
         raise ApiError(HTTPStatus.UNAUTHORIZED, failure)
+    if ctx.session:
+        # 同一浏览器重新登录：新 Cookie 会覆盖旧的，旧会话留着也用不上。
+        access.revoke(ctx.store, ctx.session["id"])
     ctx.cookies.append(http.session_cookie(token, max_age=int(access.SESSION_TTL.total_seconds())))
     return {"ok": True}
 

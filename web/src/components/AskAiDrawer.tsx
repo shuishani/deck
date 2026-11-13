@@ -1,9 +1,9 @@
 import clsx from 'clsx'
 import { Loader2, Send, Sparkles, Square, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { api, type AiAnswer, type AiReference } from '../api'
 import { href } from '../router'
-import { useData } from '../state'
+import { useActions, useData } from '../state'
 import { inputClass, Select } from './ui'
 
 const examples = ['总结所选范围最近反馈的问题', '所选项目还有哪些未完成任务？', '哪些消息还需要我处理？', '根据所选范围起草项目小结']
@@ -23,9 +23,6 @@ function scopeBody(scope: string): { project?: string; group?: number } {
   return {}
 }
 
-export function referenceHref(ref: AiReference) {
-  return ref.kind === 'task' ? href({ name: 'tasks' }) : href({ name: 'messages', group: ref.group_id, anchor: ref.id })
-}
 
 export function AskAiDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { overview } = useData()
@@ -105,14 +102,16 @@ export function AskAiDrawer({ open, onClose }: { open: boolean; onClose: () => v
           {turns.length === 0 && (
             <div>
               <p className="text-fs13 leading-relaxed text-stone-500 dark:text-stone-400">
-                选择范围后，使用其中最近最多 100 条消息和 50 条任务；不选范围则不附带本地数据。每次独立提问，不自动提交历史问答。例如：
+                选择范围后，使用其中最近最多 100 条消息和 50 条任务；不选范围则不附带本地数据。每次独立提问，不自动提交历史问答。
+                {scope ? '例如：' : '先在下方选好范围，再试试这些问题：'}
               </p>
               <div className="mt-3 flex flex-col gap-2">
                 {examples.map((example) => (
                   <button
                     key={example}
                     onClick={() => ask(example)}
-                    className="rounded-lg border border-stone-200 px-3 py-2 text-left text-fs13 text-stone-700 transition-colors hover:border-stone-300 hover:bg-stone-50 dark:border-stone-700 dark:text-stone-200 dark:hover:border-stone-600 dark:hover:bg-stone-800"
+                    disabled={!scope}
+                    className="rounded-lg border border-stone-200 px-3 py-2 text-left text-fs13 text-stone-700 transition-colors hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent dark:border-stone-700 dark:text-stone-200 dark:hover:border-stone-600 dark:hover:bg-stone-800"
                   >
                     {example}
                   </button>
@@ -185,6 +184,7 @@ export function AskAiDrawer({ open, onClose }: { open: boolean; onClose: () => v
               <Send className="size-4" />
             </button>
           </div>
+          {turns.length > 0 && <p className="mt-1.5 text-fs11 text-stone-400">每次独立提问，AI 看不到上面的问答。</p>}
         </div>
       </aside>
     </>
@@ -193,14 +193,31 @@ export function AskAiDrawer({ open, onClose }: { open: boolean; onClose: () => v
 
 function Answer({ result, onNavigate }: { result: AiAnswer; onNavigate: () => void }) {
   const { answer, references, context, usage } = result
+  const { openTaskDetail } = useActions()
+  const byMark = new Map(references.map((ref) => [`[${ref.kind === 'task' ? 'T' : 'M'}${ref.id}]`, ref]))
+  const link = (ref: AiReference) => ({
+    href: ref.kind === 'task' ? href({ name: 'tasks' }) : href({ name: 'messages', group: ref.group_id, anchor: ref.id }),
+    onClick: (event: MouseEvent) => {
+      onNavigate()
+      if (ref.kind === 'task') {
+        event.preventDefault()
+        openTaskDetail(ref.id)
+      }
+    },
+  })
   return (
     <div className="space-y-2">
-      <p className="leading-relaxed break-words whitespace-pre-wrap">{answer}</p>
+      <p className="leading-relaxed break-words whitespace-pre-wrap">
+        {answer.split(/(\[[MT]\d+\])/).map((part, i) => {
+          const ref = byMark.get(part)
+          return ref ? <a key={i} {...link(ref)} className="text-accent-600 hover:underline">{part}</a> : part
+        })}
+      </p>
       {references.length > 0 && (
         <ul className="space-y-1 border-t border-stone-200 pt-2 text-fs12 dark:border-stone-700">
           {references.map((ref) => (
             <li key={`${ref.kind}-${ref.id}`}>
-              <a href={referenceHref(ref)} onClick={onNavigate} className="block min-w-0 rounded px-1 py-0.5 hover:bg-stone-200/70 dark:hover:bg-stone-700/60">
+              <a {...link(ref)} className="block min-w-0 rounded px-1 py-0.5 hover:bg-stone-200/70 dark:hover:bg-stone-700/60">
                 <span className="text-stone-400">{ref.kind === 'task' ? '任务' : '消息'} #{ref.id} · </span>
                 <span className="font-medium">{ref.title}</span>
                 <span className="line-clamp-2 break-words text-stone-500">{ref.text}</span>

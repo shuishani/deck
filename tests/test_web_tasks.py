@@ -40,13 +40,13 @@ def test_settings_are_shared_with_cli_and_do_not_prune(api, config, store):
 
     config_module.init(config.home, None, None)
     status, body = api("POST", "/api/config", {
-        "reply_reminder_hours": 0.5, "retention_days": 7,
-        "ignore_senders": ["通知"], "poll_seconds": 10, "ai_prefix": "助手：",
+        "retention_days": 7,
+        "poll_seconds": 10, "ai_prefix": "助手：",
     }, {"X-Deck": "1"})
     assert status == 200
-    assert body["config"]["reply_reminder_hours"] == 0.5
+    assert body["config"]["retention_days"] == 7
     loaded = config_module.load(config.home)
-    assert (loaded.retention_days, loaded.ignore_senders, loaded.ai_prefix) == (7, ("通知",), "助手：")
+    assert (loaded.retention_days, loaded.ai_prefix) == (7, "助手：")
     assert len(store.timeline()) == 2
     shown = api("GET", "/api/config")[1]
     assert shown["poll_seconds"] == 10 and "poll_seconds" in shown["overridden"]
@@ -60,8 +60,7 @@ def test_settings_are_shared_with_cli_and_do_not_prune(api, config, store):
 
 
 @pytest.mark.parametrize("body", [
-    {"retention_days": 0}, {"poll_seconds": True}, {"reply_reminder_hours": -1},
-    {"reply_reminder_hours": float("inf")}, {"ignore_senders": "robot"},
+    {"retention_days": 0}, {"poll_seconds": True}, {"reply_reminder_hours": 2}, {"ignore_senders": ["robot"]},
     {"server": {"host": "0.0.0.0"}}, {"ai_prefix": 123},
 ])
 def test_settings_reject_invalid_or_security_fields(api, body):

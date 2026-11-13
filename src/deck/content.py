@@ -96,3 +96,4 @@ def _channel(raw: dict, text: str) -> tuple[str, list[Attachment]]:
             attachment.transcribing = block.get("transcription_status") in ("pending", "processing")
         attachments.append(attachment)
     return text.strip(), attachments
+

@@ -1,5 +1,4 @@
 import clsx from 'clsx'
-import { RotateCcw } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { api } from '../api'
 import { useActions } from '../state'
@@ -8,7 +7,7 @@ import { useToast } from './Toast'
 /** 区块标题：全站统一，标题 + 说明 + 右侧操作。 */
 export function SectionHeader({ title, description, action }: { title: ReactNode; description?: ReactNode; action?: ReactNode }) {
   return (
-    <div className="mb-3 flex items-end justify-between gap-3">
+    <div className="mb-3 flex items-end justify-between gap-3 max-md:flex-col max-md:items-start max-md:gap-2">
       <div className="min-w-0">
         <h2 className="text-fs15 font-semibold">{title}</h2>
         {description && <p className="mt-0.5 text-fs12 leading-relaxed text-stone-500 dark:text-stone-400">{description}</p>}
@@ -19,7 +18,8 @@ export function SectionHeader({ title, description, action }: { title: ReactNode
 }
 
 /** 设置页的一块：标题、说明，下面是一张分行的卡片。 */
-export function Section({ title, description, action, children, className }: {
+export function Section({ id, title, description, action, children, className }: {
+  id?: string
   title: string
   description?: ReactNode
   action?: ReactNode
@@ -27,7 +27,7 @@ export function Section({ title, description, action, children, className }: {
   className?: string
 }) {
   return (
-    <section className={className}>
+    <section id={id} className={clsx('scroll-mt-4', className)}>
       <SectionHeader title={title} description={description} action={action} />
       <div className="divide-y divide-stone-100 overflow-hidden rounded-xl border border-stone-200 bg-white shadow-sm shadow-stone-900/[0.02] dark:divide-stone-800 dark:border-stone-800 dark:bg-stone-900">
         {children}
@@ -59,22 +59,19 @@ export function SettingRow({ label, hint, badge, stacked, children, className }:
   )
 }
 
-/** 改过的设置：「已修改」标记和恢复默认。 */
-export function Modified({ defaultText, onReset, disabled }: { defaultText: string; onReset: () => void; disabled?: boolean }) {
+const STATUS_TONES = {
+  green: ['bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300', 'bg-emerald-500'],
+  amber: ['bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300', 'bg-amber-500'],
+  stone: ['bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-300', 'bg-stone-400'],
+}
+
+/** 区块右上角的状态：已就绪、待配置等。 */
+export function StatusPill({ tone, children }: { tone: keyof typeof STATUS_TONES; children: ReactNode }) {
   return (
-    <>
-      <span className="rounded-full bg-amber-50 px-2 text-fs11 leading-[18px] font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
-        已修改
-      </span>
-      <button
-        onClick={onReset}
-        disabled={disabled}
-        className="inline-flex items-center gap-1 text-fs12 text-stone-500 hover:text-stone-800 disabled:opacity-50 dark:hover:text-stone-200"
-      >
-        <RotateCcw className="size-3" />
-        恢复默认 {defaultText}
-      </button>
-    </>
+    <span className={clsx('inline-flex items-center gap-1.5 rounded-full px-2 text-fs11 leading-5 font-medium', STATUS_TONES[tone][0])}>
+      <span className={clsx('size-1.5 rounded-full', STATUS_TONES[tone][1])} />
+      {children}
+    </span>
   )
 }
 

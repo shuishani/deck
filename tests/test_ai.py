@@ -16,7 +16,7 @@ def ai_module():
 
 @pytest.fixture
 def data(tmp_path, monkeypatch):
-    monkeypatch.setenv('DECK_AI_API_KEY', 'local-test-secret')
+    monkeypatch.setattr('deck.keychain.read', lambda item: 'local-test-secret')
     store = Store(tmp_path / 'deck.db')
     store.add_project('p', '项目一', None)
     group = store.add_conversation('p', Conversation('channel', 'c', '测试群'))
@@ -31,7 +31,7 @@ def enable(ai, store):
         'model': 'test-model', 'monthly_token_budget': 100000, 'max_output_tokens': 1000}, approve_endpoint=True)
 
 
-def test_ai_is_disabled_and_unconfigured_until_explicitly_set(data):
+def test_ai_is_disabled_and_unconfigured_until_explicitly_set(data, monkeypatch):
     ai = ai_module()
     store, config = data
     settings = ai.settings(store)
@@ -39,6 +39,10 @@ def test_ai_is_disabled_and_unconfigured_until_explicitly_set(data):
     with pytest.raises(ValueError, match='关闭'):
         ai.ask(store, config, '总结', project='p')
     assert 'local-test-secret' not in str(settings)
+    enable(ai, store)
+    assert ai.ready(store)
+    monkeypatch.setattr('deck.keychain.read', lambda item: '')
+    assert not ai.ready(store)
 
 
 def test_ask_is_scoped_records_usage_and_does_not_send_or_handle_messages(data, monkeypatch):
@@ -68,7 +72,7 @@ def test_draft_is_only_a_reviewable_draft(data, monkeypatch):
     store, config = data
     enable(ai, store)
     monkeypatch.setattr(ai, '_complete', lambda *_: {
-        'choices': [{'message': {'content': '已收到，我先核查。'}, 'finish_reason': 'stop'}],
+        'choices': [{'message': {'content': '已收到 [M1]，我先核查。'}, 'finish_reason': 'stop'}],
         'usage': {'prompt_tokens': 10, 'completion_tokens': 5}})
     result = ai.draft(store, config, 1)
     assert result['draft'] == '已收到，我先核查。'
@@ -81,7 +85,7 @@ def test_ai_settings_reject_secrets_bad_endpoints_and_unknown_fields(data):
     store, _ = data
     for bad in ({'api_key': 'secret'}, {'base_url': 'http://example.com/v1'},
                 {'base_url': 'https://user:secret@example.com'}, {'enabled': 'yes'},
-                {'monthly_token_budget': -1}, {'api_key_env': 'PATH'}, {'provider': 'unknown'}):
+                {'monthly_token_budget': -1}, {'api_key_keychain': 'bad name'}, {'provider': 'unknown'}):
         with pytest.raises(ValueError):
             ai.configure(store, bad)
 
@@ -183,7 +187,7 @@ def test_remote_endpoint_without_key_still_needs_local_approval(data, monkeypatc
     store, config = data
     # 不填密钥变量也不能绕过批准，否则任意已登录设备都能把群消息发到外部地址。
     ai.configure(store, {'enabled': True, 'base_url': 'https://elsewhere.example.invalid/v1',
-                         'model': 'x', 'api_key_env': ''})
+                         'model': 'x', 'api_key_keychain': ''})
     monkeypatch.setattr(ai, '_complete', lambda *_: (_ for _ in ()).throw(AssertionError('不应发出模型请求')))
     assert not ai.settings(store)['endpoint_approved']
     with pytest.raises(ValueError, match='批准'):
