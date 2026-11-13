@@ -2,10 +2,11 @@ import clsx from 'clsx'
 import { Plus } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { api, type Project, type Source } from '../api'
-import { useDeck } from '../state'
+import { PLATFORMS, SOURCES } from '../platforms'
+import { useActions } from '../state'
 import { SourceBadge } from './SourceBadge'
 import { useToast } from './Toast'
-import { Button, Dialog, Field, inputClass } from './ui'
+import { Button, Dialog, Field, inputClass, Select } from './ui'
 
 const NEW = '__new__'
 
@@ -18,13 +19,13 @@ export function AddGroupDialog({
   onClose: () => void
   defaultProject?: string
 }) {
-  const { bump } = useDeck()
+  const { bump } = useActions()
   const toast = useToast()
   const [projects, setProjects] = useState<Project[]>([])
   const [project, setProject] = useState('')
   const [newKey, setNewKey] = useState('')
   const [newName, setNewName] = useState('')
-  const [source, setSource] = useState<Source>('dingtalk')
+  const [source, setSource] = useState<Source>(SOURCES[0])
   const [query, setQuery] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -77,21 +78,20 @@ export function AddGroupDialog({
             取消
           </Button>
           <Button variant="primary" onClick={submit} disabled={busy || !ready}>
-            {busy ? '查找并添加…' : '添加'}
+            {busy ? '添加中…' : '添加'}
           </Button>
         </>
       }
     >
       <div className="space-y-4">
         <Field label="项目">
-          <select value={project} onChange={(event) => setProject(event.target.value)} className={inputClass}>
-            {projects.map((p) => (
-              <option key={p.key} value={p.key}>
-                {p.name}（{p.key}）
-              </option>
-            ))}
-            <option value={NEW}>+ 新建项目…</option>
-          </select>
+          <Select
+            field
+            value={project}
+            options={[...projects.map((p) => ({ id: p.key, label: p.name, hint: p.key })), { id: NEW, label: '+ 新建项目…' }]}
+            onChange={setProject}
+            label="项目"
+          />
         </Field>
         {creating && (
           <div className="grid grid-cols-[1fr_2fr] gap-3 rounded-xl bg-stone-50 p-3 dark:bg-stone-800/50">
@@ -110,7 +110,7 @@ export function AddGroupDialog({
         )}
         <Field label="来源">
           <div className="grid grid-cols-2 gap-2">
-            {(['dingtalk', 'channel'] as Source[]).map((value) => (
+            {SOURCES.map((value) => (
               <button
                 key={value}
                 type="button"
@@ -123,17 +123,17 @@ export function AddGroupDialog({
                 )}
               >
                 <SourceBadge source={value} />
-                <span className="font-medium">{value === 'dingtalk' ? '钉钉' : 'channel'}</span>
+                <span className="font-medium">{PLATFORMS[value].name}</span>
               </button>
             ))}
           </div>
         </Field>
-        <Field label="群名或原始 id" hint="按名字查找时必须唯一匹配；同名的群请直接填原始 id。">
+        <Field label="群名或原始 id" hint="按群名查找时须唯一匹配；如有同名群，请填写原始 id。">
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && ready && !busy && void submit()}
-            placeholder={source === 'dingtalk' ? '如 management-x-dev-TEST' : '如 测试dev-1023'}
+            placeholder={`例如 ${PLATFORMS[source].example}`}
             className={inputClass}
           />
         </Field>

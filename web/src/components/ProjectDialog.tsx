@@ -1,16 +1,16 @@
 import { useState } from 'react'
-import { api } from '../api'
+import { api, type Project } from '../api'
 import { navigate } from '../router'
-import { useDeck } from '../state'
+import { useActions } from '../state'
 import { useToast } from './Toast'
 import { Button, Dialog, Field, inputClass } from './ui'
 
-export function ProjectDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { bump } = useDeck()
+export function ProjectDialog({ open, onClose, project }: { open: boolean; onClose: () => void; project?: Project }) {
+  const { bump } = useActions()
   const toast = useToast()
-  const [key, setKey] = useState('')
-  const [name, setName] = useState('')
-  const [repo, setRepo] = useState('')
+  const [key, setKey] = useState(project?.key || '')
+  const [name, setName] = useState(project?.name || '')
+  const [repo, setRepo] = useState(project?.repo || '')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const ready = key.trim() && name.trim()
@@ -19,11 +19,12 @@ export function ProjectDialog({ open, onClose }: { open: boolean; onClose: () =>
     setBusy(true)
     setError(null)
     try {
-      await api.addProject({ key: key.trim(), name: name.trim(), repo: repo.trim() || undefined })
-      toast(`已建项目「${name.trim()}」`)
+      if (project) await api.updateProject(project.key, { name: name.trim(), repo: repo.trim() || null })
+      else await api.addProject({ key: key.trim(), name: name.trim(), repo: repo.trim() || undefined })
+      toast(`项目「${name.trim()}」已${project ? '保存' : '创建'}`)
       bump()
       onClose()
-      navigate({ name: 'project', key: key.trim(), tab: 'overview' })
+      if (!project) navigate({ name: 'project', key: key.trim(), tab: 'overview' })
       setKey('')
       setName('')
       setRepo('')
@@ -38,22 +39,22 @@ export function ProjectDialog({ open, onClose }: { open: boolean; onClose: () =>
     <Dialog
       open={open}
       onClose={busy ? () => {} : onClose}
-      title="新建项目"
+      title={project ? '编辑项目' : '新建项目'}
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={busy}>
             取消
           </Button>
           <Button variant="primary" onClick={submit} disabled={busy || !ready}>
-            {busy ? '创建中…' : '创建'}
+            {busy ? '保存中…' : project ? '保存' : '创建'}
           </Button>
         </>
       }
     >
       <div className="space-y-4">
         <div className="grid grid-cols-[1fr_2fr] gap-3">
-          <Field label="简称" hint="命令行里用，如 mx">
-            <input autoFocus value={key} onChange={(e) => setKey(e.target.value)} placeholder="mx" className={inputClass} />
+          <Field label="简称" hint="用于命令行，例如 mx">
+            <input autoFocus={!project} disabled={!!project} value={key} onChange={(e) => setKey(e.target.value)} placeholder="mx" className={inputClass} />
           </Field>
           <Field label="名称">
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Management-X" className={inputClass} />

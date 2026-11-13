@@ -7,12 +7,13 @@ import { Page, PageHeader } from '../components/PageHeader'
 import { ProjectDialog } from '../components/ProjectDialog'
 import { CountBadge, SourceBadge } from '../components/SourceBadge'
 import { Button } from '../components/ui'
-import { useTasks } from '../mock/tasks'
+import { useTasks } from '../tasks'
 import { href } from '../router'
-import { useDeck } from '../state'
+import { useData } from '../state'
+import { RepoPath } from '../components/Tags'
 
 export function Projects() {
-  const { overview, overviewError, reloadOverview } = useDeck()
+  const { overview, overviewError, reloadOverview } = useData()
   const [creating, setCreating] = useState(false)
 
   return (
@@ -35,8 +36,8 @@ export function Projects() {
       {overview?.length === 0 && (
         <EmptyState
           icon={<FolderKanban className="size-5" />}
-          title="还没有项目"
-          hint="项目把相关的群、仓库、任务放在一起。先建一个，再往里加群。"
+          title="暂无项目"
+          hint="项目用于集中管理相关的群、仓库和任务。请先创建项目，再添加群。"
           action={
             <Button variant="primary" onClick={() => setCreating(true)}>
               <Plus className="size-3.5" />
@@ -45,7 +46,7 @@ export function Projects() {
           }
         />
       )}
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {overview?.map((project) => (
           <ProjectCard key={project.key} project={project} />
         ))}
@@ -68,13 +69,15 @@ function ProjectCard({ project }: { project: OverviewProject }) {
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h3 className="truncate font-semibold group-hover:text-accent-700 dark:group-hover:text-accent-500">{project.name}</h3>
-            <span className="rounded bg-stone-100 px-1.5 font-mono text-fs11 text-stone-500 dark:bg-stone-800">{project.key}</span>
+            <h3 className="min-w-0 truncate font-semibold group-hover:text-accent-700 dark:group-hover:text-accent-500" title={project.name}>
+              {project.name}
+            </h3>
+            <span className="shrink-0 rounded bg-stone-100 px-1.5 font-mono text-fs11 text-stone-500 dark:bg-stone-800">{project.key}</span>
           </div>
           {project.repo ? (
-            <p className="mt-0.5 flex items-center gap-1 truncate font-mono text-fs11 text-stone-500">
+            <p className="mt-0.5 flex min-w-0 items-center gap-1 font-mono text-fs11 text-stone-500">
               <FolderGit2 className="size-3 shrink-0" />
-              <span className="truncate">{project.repo}</span>
+              <RepoPath path={project.repo} />
             </p>
           ) : (
             <p className="mt-0.5 text-fs12 text-stone-400">未关联仓库</p>
@@ -83,7 +86,7 @@ function ProjectCard({ project }: { project: OverviewProject }) {
       </div>
       <div className="mt-4 grid grid-cols-3 gap-2 border-t border-stone-100 pt-3 text-fs12 dark:border-stone-800">
         <Stat icon={<MessagesSquare className="size-3.5" />} label="群" value={project.groups.length} />
-        <Stat icon={<Inbox className="size-3.5" />} label="待回复" value={project.awaiting_count} alert />
+        <Stat icon={<Inbox className="size-3.5" />} label="需回复" value={project.awaiting_count} alert />
         <Stat icon={<ListTodo className="size-3.5" />} label="任务" value={tasks.length} />
       </div>
       {project.groups.length > 0 && (

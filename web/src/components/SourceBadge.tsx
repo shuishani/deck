@@ -1,35 +1,36 @@
 import clsx from 'clsx'
 import type { Source, WatchState } from '../api'
 import { relative } from '../format'
+import { PLATFORMS } from '../platforms'
 
 export function SourceBadge({ source, className }: { source: Source; className?: string }) {
   return (
     <span
-      title={source === 'dingtalk' ? '钉钉' : 'channel'}
+      title={PLATFORMS[source].name}
       className={clsx(
         'inline-flex size-[18px] shrink-0 items-center justify-center rounded-[5px] text-fs10 leading-none font-semibold',
-        source === 'dingtalk'
-          ? 'bg-ding-100 text-ding-700 dark:bg-ding-500/20 dark:text-ding-100'
-          : 'bg-chan-100 text-chan-700 dark:bg-chan-500/20 dark:text-chan-100',
+        PLATFORMS[source].tone,
         className,
       )}
     >
-      {source === 'dingtalk' ? '钉' : 'C'}
+      {PLATFORMS[source].mark}
     </span>
   )
 }
 
-export function sourceName(source: Source) {
-  return source === 'dingtalk' ? '钉钉' : 'channel'
-}
-
 export function watchTone(watch: WatchState) {
+  if (watch.mode === 'paused') return 'paused'
   if (watch.error) return 'error'
   return watch.mode === 'realtime' ? 'realtime' : 'poll'
 }
 
+export function watchShort(watch: WatchState) {
+  return { paused: '已暂停', error: '异常', realtime: '实时', poll: '轮询' }[watchTone(watch)]
+}
+
 export function watchLabel(watch: WatchState) {
-  if (watch.error) return `出错：${watch.error}`
+  if (watch.mode === 'paused') return '已暂停监听，可在「设置 → 连接」中恢复'
+  if (watch.error) return `异常：${watch.error}`
   const mode = watch.mode === 'realtime' ? '实时监听' : '定时轮询'
   return `${mode} · 上次同步 ${relative(watch.last_sync_at)}`
 }
@@ -44,8 +45,8 @@ export function StatusDot({ watch, className }: { watch: WatchState; className?:
       <span
         className={clsx(
           'relative inline-flex size-2 rounded-full',
-          tone === 'realtime' && 'bg-emerald-500',
-          tone === 'poll' && 'bg-amber-400',
+          (tone === 'realtime' || tone === 'poll') && 'bg-emerald-500',
+          tone === 'paused' && 'border border-stone-400 dark:border-stone-500',
           tone === 'error' && 'bg-red-500',
         )}
       />

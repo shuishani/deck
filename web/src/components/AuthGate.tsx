@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
+import { startPolling } from '../connection'
 import { api, ApiError, UNAUTHORIZED_EVENT } from '../api'
 import { Checking, Login, Unreachable } from '../views/Login'
 import App from '../App'
@@ -22,25 +23,38 @@ export function AuthGate() {
     return link?.code ? { state: 'out', code: link.code } : { state: 'checking' }
   })
 
-  const check = useCallback(() => {
-    setGate({ state: 'checking' })
-    api
-      .auth()
-      .then(({ authenticated }) => {
-        if (authenticated && loginLink()) window.history.replaceState(null, '', '#/inbox')
-        setGate(authenticated ? { state: 'in' } : { state: 'out' })
-      })
-      .catch((err) => {
-        // 还没有登录功能的旧后端：没有 /auth，直接进。
-        if (err instanceof ApiError && err.status === 404) return setGate({ state: 'in' })
-        setGate({ state: 'unreachable', message: err instanceof Error ? err.message : String(err) })
-      })
-  }, [])
+  const [attempt, setAttempt] = useState(0)
+  const needsCheck = gate.state === 'checking' || gate.state === 'unreachable'
 
   useEffect(() => {
-    // 只在第一次进来时检查；之后靠 401 事件和登录结果切换。
-    if (gate.state === 'checking') check()
-  }, [])
+    if (!needsCheck) return
+    const poll = startPolling({
+      probe: async (signal) => {
+        try {
+          return await api.auth(signal)
+        } catch (error) {
+          // 兼容尚未提供登录接口的旧后端。
+          if (error instanceof ApiError && error.status === 404) return { authenticated: true }
+          throw error
+        }
+      },
+      onValue: ({ authenticated }) => {
+        if (authenticated && loginLink()) window.history.replaceState(null, '', '#/messages')
+        setGate(authenticated ? { state: 'in' } : { state: 'out' })
+      },
+      onError: (error) => setGate({ state: 'unreachable', message: error instanceof Error ? error.message : String(error) }),
+    })
+    const wake = () => { if (document.visibilityState === 'visible') poll.wake() }
+    window.addEventListener('online', wake)
+    window.addEventListener('focus', wake)
+    document.addEventListener('visibilitychange', wake)
+    return () => {
+      poll.stop()
+      window.removeEventListener('online', wake)
+      window.removeEventListener('focus', wake)
+      document.removeEventListener('visibilitychange', wake)
+    }
+  }, [needsCheck, attempt])
 
   useEffect(() => {
     const onUnauthorized = () => setGate((current) => (current.state === 'out' ? current : { state: 'out' }))
@@ -66,7 +80,7 @@ export function AuthGate() {
     case 'checking':
       return <Checking />
     case 'unreachable':
-      return <Unreachable message={gate.message} onRetry={check} />
+      return <Unreachable message={gate.message} onRetry={() => setAttempt((n) => n + 1)} />
     case 'out':
       return <Login key={gate.code ?? 'manual'} initialCode={gate.code} onDone={loggedIn} />
     case 'in':

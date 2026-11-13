@@ -6,3 +6,5 @@ __pycache__/
 tools/
 # 前端构建产物，用 cd web && pnpm build 生成
 src/deck/static/
+# TypeScript 增量编译缓存
+*.tsbuildinfo

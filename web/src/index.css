@@ -57,6 +57,11 @@ body {
     --text-fs18: 20px;
     --text-fs24: 26px;
   }
+
+  /* iOS 在输入框字号小于 16px 时，聚焦会自动放大页面；不进 layer，才能压过工具类。 */
+  :is(input, textarea, select):is(.text-fs9, .text-fs10, .text-fs11, .text-fs12, .text-fs13) {
+    font-size: 16px;
+  }
 }
 
 ::selection {

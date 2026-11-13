@@ -1,10 +1,10 @@
 import clsx from 'clsx'
-import { ArrowRight, FolderKanban, Inbox, ListTodo, MessageSquare, MessagesSquare, Search, Settings } from 'lucide-react'
+import { ArrowRight, FolderKanban, ListTodo, MessageSquare, MessagesSquare, ScrollText, Search, Settings } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { api, type Message } from '../api'
+import { api, type MessageSearchResult } from '../api'
 import { shortTime } from '../format'
 import { href, type Route } from '../router'
-import { useDeck } from '../state'
+import { useData } from '../state'
 import { SourceBadge } from './SourceBadge'
 
 interface Item {
@@ -18,33 +18,86 @@ interface Item {
 }
 
 const pages: { label: string; icon: ReactNode; to: Route }[] = [
-  { label: '收件箱', icon: <Inbox className="size-4" />, to: { name: 'inbox' } },
   { label: '消息', icon: <MessagesSquare className="size-4" />, to: { name: 'messages' } },
   { label: '任务', icon: <ListTodo className="size-4" />, to: { name: 'tasks' } },
   { label: '项目', icon: <FolderKanban className="size-4" />, to: { name: 'projects' } },
+  { label: '日志', icon: <ScrollText className="size-4" />, to: { name: 'log' } },
   { label: '设置 · 连接', icon: <Settings className="size-4" />, to: { name: 'settings', tab: 'connections' } },
+  { label: '设置 · 群与提醒', icon: <Settings className="size-4" />, to: { name: 'settings', tab: 'reminders' } },
   { label: '设置 · AI', icon: <Settings className="size-4" />, to: { name: 'settings', tab: 'ai' } },
-  { label: '设置 · 日志', icon: <Settings className="size-4" />, to: { name: 'settings', tab: 'log' } },
+  { label: '设置 · 访问', icon: <Settings className="size-4" />, to: { name: 'settings', tab: 'access' } },
 ]
 
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { overview, groups } = useDeck()
+  const { overview, groups } = useData()
   const [query, setQuery] = useState('')
-  const [messages, setMessages] = useState<Message[] | null>(null)
+  const [hits, setHits] = useState<MessageSearchResult['hits']>([])
+  const [cursor, setCursor] = useState<string | null>(null)
+  const [searching, setSearching] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
   const [index, setIndex] = useState(0)
   const input = useRef<HTMLInputElement>(null)
+  const ticket = useRef(0)
+  const pending = useRef<AbortController | null>(null)
+  const needle = query.trim()
 
   useEffect(() => {
     if (!open) return
     setQuery('')
     setIndex(0)
-    setMessages(null)
-    api
-      .timeline({ limit: 200 })
-      .then(({ messages }) => setMessages(messages))
-      .catch(() => setMessages([]))
     setTimeout(() => input.current?.focus(), 0)
   }, [open])
+
+  // 防抖后查询本地已同步的全部消息；新输入会取消旧请求，过期结果不会覆盖新结果。
+  useEffect(() => {
+    pending.current?.abort()
+    const mine = ++ticket.current
+    setHits([])
+    setCursor(null)
+    setSearchError(null)
+    if (!open || !needle) {
+      setSearching(false)
+      return
+    }
+    setSearching(true)
+    const controller = new AbortController()
+    pending.current = controller
+    const timer = setTimeout(() => {
+      api
+        .search({ q: needle }, controller.signal)
+        .then((page) => {
+          if (mine !== ticket.current) return
+          setHits(page.hits)
+          setCursor(page.next_cursor)
+        })
+        .catch((err) => {
+          if (mine === ticket.current && !controller.signal.aborted) setSearchError(err instanceof Error ? err.message : String(err))
+        })
+        .finally(() => {
+          if (mine === ticket.current) setSearching(false)
+        })
+    }, 250)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [needle, open])
+
+  async function loadMore() {
+    if (!cursor || searching) return
+    const mine = ticket.current
+    setSearching(true)
+    try {
+      const page = await api.search({ q: needle, cursor }, pending.current?.signal)
+      if (mine !== ticket.current) return
+      setHits((all) => [...all, ...page.hits.filter((hit) => !all.some((old) => old.message.id === hit.message.id))])
+      setCursor(page.next_cursor)
+    } catch (err) {
+      if (mine === ticket.current) setSearchError(err instanceof Error ? err.message : String(err))
+    } finally {
+      if (mine === ticket.current) setSearching(false)
+    }
+  }
 
   const items = useMemo<Item[]>(() => {
     const q = query.trim().toLowerCase()
@@ -78,21 +131,20 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
           text: group.name,
         })
     }
-    if (q && messages) {
-      const hits = [...messages].reverse().filter((m) => m.text.toLowerCase().includes(q)).slice(0, 8)
-      for (const message of hits)
+    if (q) {
+      for (const { message, excerpt } of hits)
         result.push({
           id: `message:${message.id}`,
           section: '消息',
-          label: <Snippet text={message.text} query={q} />,
+          label: <Snippet text={excerpt || message.text} query={q} />,
           hint: `${message.is_me ? '我' : message.sender_name} · ${message.group_name} · ${shortTime(message.sent_at)}`,
           icon: <MessageSquare className="size-4" />,
-          to: { name: 'messages', group: message.group_id },
+          to: { name: 'messages', group: message.group_id, anchor: message.id },
           text: message.text,
         })
     }
     return result
-  }, [query, overview, groups, messages])
+  }, [query, overview, groups, hits])
 
   useEffect(() => setIndex(0), [query])
 
@@ -125,15 +177,17 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
                 setIndex((i) => Math.max(i - 1, 0))
               } else if (event.key === 'Enter') go(items[index])
             }}
-            placeholder="搜索消息、群、项目，或跳到某个页面…"
+            placeholder="搜索消息、群、项目或页面"
             className="h-12 flex-1 bg-transparent text-fs15 outline-none placeholder:text-stone-400"
           />
           <kbd className="rounded border border-stone-200 px-1.5 text-fs11 text-stone-400 dark:border-stone-700">esc</kbd>
         </div>
+        <p className="px-4 pt-2 text-fs11 text-stone-400">消息检索本地已同步的全部历史；点击结果定位到原消息。</p>
+        {searchError && <p role="alert" className="px-4 pt-2 text-fs12 break-words text-red-600">{searchError}</p>}
         <div className="scroll-thin max-h-[55vh] overflow-y-auto p-2">
           {items.length === 0 && (
             <p className="px-3 py-8 text-center text-fs13 text-stone-400">
-              {messages === null && query ? '正在读取消息…' : '没有找到'}
+              {searching ? '搜索中…' : '无匹配结果'}
             </p>
           )}
           {items.map((item, i) => {
@@ -160,6 +214,12 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
               </div>
             )
           })}
+          {needle && searching && items.length > 0 && <p className="px-3 py-2 text-center text-fs12 text-stone-400">搜索中…</p>}
+          {cursor && !searching && (
+            <button onClick={() => void loadMore()} className="w-full rounded-lg px-3 py-2 text-center text-fs12 font-medium text-stone-500 hover:bg-stone-100 dark:hover:bg-stone-800">
+              加载更多消息
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -169,6 +229,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
 function Snippet({ text, query }: { text: string; query: string }) {
   const flat = text.replace(/\s+/g, ' ')
   const at = flat.toLowerCase().indexOf(query)
+  if (at < 0) return <>{flat.slice(0, 80)}</>
   const start = Math.max(0, at - 20)
   const before = (start > 0 ? '…' : '') + flat.slice(start, at)
   return (

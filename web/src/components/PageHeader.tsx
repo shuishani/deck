@@ -2,33 +2,12 @@ import clsx from 'clsx'
 import { ChevronLeft, RefreshCw, Search, Sparkles } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { api } from '../api'
-import { setAiPaused, useAiPaused } from '../mock/aiSwitch'
-import { useDeck } from '../state'
+import { useActions } from '../state'
 import { useToast } from './Toast'
 import { Button } from './ui'
 
-export function AiPill({ className }: { className?: string }) {
-  const paused = useAiPaused()
-  return (
-    <button
-      onClick={() => setAiPaused(!paused)}
-      title={paused ? '点击恢复 AI 自动化' : '点击暂停所有 AI 自动化'}
-      className={clsx(
-        'inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full border px-2 text-fs11 font-medium transition-colors',
-        paused
-          ? 'border-stone-300 bg-stone-100 text-stone-500 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-400'
-          : 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300',
-        className,
-      )}
-    >
-      <span className={clsx('size-1.5 rounded-full', paused ? 'bg-stone-400' : 'bg-emerald-500')} />
-      {paused ? 'AI 已暂停' : 'AI 运行中'}
-    </button>
-  )
-}
-
-export function SyncButton({ project, compact }: { project?: string; compact?: boolean }) {
-  const { bump } = useDeck()
+export function SyncButton({ project, compact, icon }: { project?: string; compact?: boolean; icon?: boolean }) {
+  const { bump } = useActions()
   const toast = useToast()
   const [syncing, setSyncing] = useState(false)
 
@@ -39,7 +18,7 @@ export function SyncButton({ project, compact }: { project?: string; compact?: b
       const failed = results.filter((r) => r.error)
       const added = results.reduce((sum, r) => sum + r.added, 0)
       if (failed.length) toast(failed.map((r) => `${r.name}：${r.error}`).join('\n'), 'error')
-      else toast(added ? `同步完成，新增 ${added} 条消息` : '同步完成，没有新消息', added ? 'success' : 'info')
+      else toast(added ? `同步完成，新增 ${added} 条消息` : '同步完成，暂无新消息', added ? 'success' : 'info')
       bump()
     } catch (err) {
       toast(err instanceof Error ? err.message : String(err), 'error')
@@ -48,13 +27,24 @@ export function SyncButton({ project, compact }: { project?: string; compact?: b
     }
   }
 
+  if (icon) {
+    return (
+      <button onClick={sync} disabled={syncing} title="同步：获取各群最新消息" aria-label="同步" className={iconButton}>
+        <RefreshCw className={clsx('size-4', syncing && 'animate-spin')} />
+      </button>
+    )
+  }
   return (
-    <Button onClick={sync} disabled={syncing} title="从各群拉取最新消息" className={clsx(compact && '!px-2')}>
+    <Button onClick={sync} disabled={syncing} title="获取各群最新消息" className={clsx(compact && '!px-2')}>
       <RefreshCw className={clsx('size-3.5', syncing && 'animate-spin')} />
       <span className={clsx(compact && 'max-md:hidden')}>{syncing ? '同步中' : '同步'}</span>
     </Button>
   )
 }
+
+/** 页头、工具栏里的图标按钮：手机上 40×40。 */
+export const iconButton =
+  'inline-flex items-center justify-center rounded-lg p-1.5 text-stone-500 transition-colors hover:bg-stone-100 hover:text-stone-800 disabled:opacity-50 max-md:size-10 max-md:p-0 max-md:[&_svg]:size-5 dark:hover:bg-stone-800 dark:hover:text-stone-200'
 
 export function PageHeader({
   title,
@@ -71,7 +61,7 @@ export function PageHeader({
   syncProject?: string
   children?: ReactNode
 }) {
-  const { openSearch, openAskAi } = useDeck()
+  const { openSearch, openAskAi } = useActions()
   return (
     <header className="shrink-0 border-b border-stone-200 bg-stone-50/90 backdrop-blur dark:border-stone-800 dark:bg-stone-950/90">
       <div className="flex min-h-14 items-center gap-3 px-4 py-2 md:px-6">
@@ -88,21 +78,24 @@ export function PageHeader({
           <h1 className="truncate text-fs16 font-semibold tracking-tight max-md:text-fs18">{title}</h1>
           {subtitle && <p className="truncate text-fs12 text-stone-500 dark:text-stone-400">{subtitle}</p>}
         </div>
-        <div className="flex shrink-0 items-center gap-2 max-md:[&_svg]:size-[18px] max-md:[&>button]:min-h-9">
-          <button
-            onClick={openSearch}
-            className="rounded-lg p-1.5 text-stone-500 hover:bg-stone-100 md:hidden dark:hover:bg-stone-800"
-            aria-label="搜索"
-          >
+        <div className="flex shrink-0 items-center gap-2 max-md:gap-0.5 max-md:[&>button]:size-10 max-md:[&>button]:!px-0">
+          <button onClick={openSearch} className={clsx(iconButton, 'md:hidden')} aria-label="搜索">
             <Search className="size-4" />
           </button>
-          <AiPill className="md:hidden" />
           {actions}
-          <Button onClick={openAskAi} title="问 AI" className="max-md:!px-2">
+          <Button onClick={openAskAi} title="问 AI" className="max-md:hidden">
             <Sparkles className="size-3.5" />
-            <span className="max-md:hidden">问 AI</span>
+            问 AI
           </Button>
-          <SyncButton project={syncProject} compact />
+          <button onClick={openAskAi} className={clsx(iconButton, 'md:hidden')} aria-label="问 AI">
+            <Sparkles className="size-4" />
+          </button>
+          <span className="max-md:hidden">
+            <SyncButton project={syncProject} compact />
+          </span>
+          <span className="md:hidden">
+            <SyncButton project={syncProject} icon />
+          </span>
         </div>
       </div>
       {children}
@@ -115,7 +108,8 @@ export function Page({ header, children, wide }: { header: ReactNode; children: 
     <div className="flex min-h-0 flex-1 flex-col">
       {header}
       <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
-        <div className={clsx('mx-auto px-4 py-6 md:px-6', wide ? 'max-w-7xl' : 'max-w-6xl')}>{children}</div>
+        {/* 靠左对齐，和页头标题同一条左边线。 */}
+        <div className={clsx('px-4 py-6 md:px-6', wide ? 'max-w-7xl' : 'max-w-6xl')}>{children}</div>
       </div>
     </div>
   )

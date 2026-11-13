@@ -9,24 +9,28 @@ import {
   MessagesSquare,
   Plus,
   ShieldCheck,
-  Trash2,
+  MoreHorizontal,
 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
-import { api, type Group, type OverviewGroup, type OverviewProject } from '../api'
+import { api, type Group, type GroupKind, type OverviewGroup, type OverviewProject } from '../api'
+import { SectionHeader } from '../components/SettingsLayout'
+import { sourceName } from '../platforms'
 import { AddGroupDialog } from '../components/AddGroupDialog'
+import { GroupSettingsDialog } from '../components/GroupSettingsDialog'
+import { ProjectDialog } from '../components/ProjectDialog'
 import { EmptyState, ErrorBar, Skeleton } from '../components/Feedback'
 import { MessageItem } from '../components/MessageItem'
-import { PageHeader } from '../components/PageHeader'
-import { CountBadge, SourceBadge, StatusDot, sourceName, watchLabel } from '../components/SourceBadge'
-import { MockNotice, TaskBoard } from '../components/TaskBoard'
-import { KindTag } from '../components/Tags'
-import { ComingSoon } from '../mock/ComingSoon'
+import { iconButton, PageHeader } from '../components/PageHeader'
+import { CountBadge, SourceBadge, StatusDot, watchLabel, watchShort } from '../components/SourceBadge'
+import { TaskBoard } from '../components/TaskBoard'
+import { KindTag, RepoPath } from '../components/Tags'
+import { ComingSoon } from '../components/ComingSoon'
 import { useToast } from '../components/Toast'
-import { Button, ConfirmDialog, Tabs } from '../components/ui'
+import { Button, ConfirmDialog, Menu, Tabs } from '../components/ui'
 import { relative, shortTime } from '../format'
-import { useTasks } from '../mock/tasks'
 import { href, navigate, type ProjectTab } from '../router'
-import { taskSource, taskTitle, useDeck, useLoad } from '../state'
+import { taskDraftFrom, useLoad, useActions, useData } from '../state'
+import { useTasks } from '../tasks'
 import { MessagesPane } from './Messages'
 
 const tabs: { id: ProjectTab; label: string }[] = [
@@ -38,7 +42,7 @@ const tabs: { id: ProjectTab; label: string }[] = [
 ]
 
 export function ProjectHome({ projectKey, tab }: { projectKey: string; tab: ProjectTab }) {
-  const { overview, overviewError, reloadOverview } = useDeck()
+  const { overview, overviewError, reloadOverview } = useData()
   const [group, setGroup] = useState<number | undefined>()
   const project = overview?.find((p) => p.key === projectKey)
 
@@ -62,10 +66,10 @@ export function ProjectHome({ projectKey, tab }: { projectKey: string; tab: Proj
       <div className="p-6">
         <EmptyState
           icon={<FolderX className="size-5" />}
-          title={`没有项目「${projectKey}」`}
+          title={`项目「${projectKey}」不存在`}
           action={
             <a href={href({ name: 'projects' })}>
-              <Button>回到项目列表</Button>
+              <Button>返回项目列表</Button>
             </a>
           }
         />
@@ -78,18 +82,18 @@ export function ProjectHome({ projectKey, tab }: { projectKey: string; tab: Proj
       <PageHeader
         back={{ href: href({ name: 'projects' }), label: '项目' }}
         title={
-          <span className="flex items-center gap-2">
-            {project.name}
-            <span className="rounded bg-stone-200/70 px-1.5 font-mono text-fs11 font-normal text-stone-600 dark:bg-stone-800 dark:text-stone-400">
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="truncate" title={project.name}>{project.name}</span>
+            <span className="shrink-0 rounded bg-stone-200/70 px-1.5 font-mono text-fs11 font-normal text-stone-600 dark:bg-stone-800 dark:text-stone-400">
               {project.key}
             </span>
           </span>
         }
         subtitle={
           project.repo ? (
-            <span className="inline-flex items-center gap-1 font-mono">
-              <FolderGit2 className="size-3" />
-              {project.repo}
+            <span className="flex min-w-0 items-center gap-1 font-mono">
+              <FolderGit2 className="size-3 shrink-0" />
+              <RepoPath path={project.repo} />
             </span>
           ) : (
             '未关联仓库'
@@ -120,13 +124,10 @@ export function ProjectHome({ projectKey, tab }: { projectKey: string; tab: Proj
     <div className="flex min-h-0 flex-1 flex-col">
       {header}
       <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
-        <div className={clsx('mx-auto px-4 py-6 md:px-6', tab === 'tasks' ? 'max-w-7xl' : 'max-w-6xl')}>
+        <div className={clsx('px-4 py-6 md:px-6', tab === 'tasks' ? 'max-w-7xl' : 'max-w-6xl')}>
           {tab === 'overview' && <OverviewTab project={project} />}
           {tab === 'tasks' && (
-            <div className="space-y-4">
-              <MockNotice />
-              <TaskBoard project={project.key} />
-            </div>
+            <TaskBoard project={project.key} newButton />
           )}
           {tab === 'fixes' && <FixesTab />}
           {tab === 'settings' && <SettingsTab project={project} />}
@@ -137,9 +138,10 @@ export function ProjectHome({ projectKey, tab }: { projectKey: string; tab: Proj
 }
 
 function OverviewTab({ project }: { project: OverviewProject }) {
-  const { version, openSend, openTask } = useDeck()
+  const { versions } = useData()
+  const { openReply, openTask } = useActions()
   const tasks = useTasks().filter((task) => task.project === project.key)
-  const recent = useLoad(() => api.timeline({ project: project.key, limit: 5 }), [project.key, version])
+  const recent = useLoad(() => api.timeline({ project: project.key, limit: 5 }), [project.key, versions.messages])
   const today = project.groups.reduce((n, g) => n + g.today_count, 0)
   const doing = tasks.filter((t) => t.status === 'doing').length
   const open = tasks.filter((t) => t.status !== 'done').length
@@ -149,8 +151,8 @@ function OverviewTab({ project }: { project: OverviewProject }) {
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Tile label="监测的群" value={project.groups.length} icon={<MessagesSquare className="size-4" />} />
         <Tile label="今日消息" value={today} icon={<Clock className="size-4" />} />
-        <Tile label="待我回复" value={project.awaiting_count} icon={<MessagesSquare className="size-4" />} alert />
-        <Tile label="进行中任务" value={doing} hint={`共 ${open} 件未完成`} icon={<ListTodo className="size-4" />} />
+        <Tile label="需回复" value={project.awaiting_count} icon={<MessagesSquare className="size-4" />} alert />
+        <Tile label="进行中任务" value={doing} hint={`共 ${open} 项未完成`} icon={<ListTodo className="size-4" />} />
       </div>
 
       <section>
@@ -165,11 +167,11 @@ function OverviewTab({ project }: { project: OverviewProject }) {
         {project.groups.length === 0 ? (
           <EmptyState
             icon={<MessagesSquare className="size-5" />}
-            title="这个项目还没有群"
-            hint="去「设置」把相关的钉钉群或 channel 频道加进来。"
+            title="该项目暂无群"
+            hint="添加要监测的群后，deck 会持续同步消息。"
           />
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {project.groups.map((group) => (
               <GroupCard key={group.id} group={group} />
             ))}
@@ -189,14 +191,17 @@ function OverviewTab({ project }: { project: OverviewProject }) {
         <div className="rounded-xl border border-stone-200 bg-white p-1.5 dark:border-stone-800 dark:bg-stone-900">
           {recent.error && <ErrorBar message={recent.error} onRetry={recent.reload} />}
           {recent.loading && <Skeleton className="m-2 h-20" />}
-          {recent.data?.messages.length === 0 && <p className="p-4 text-center text-fs13 text-stone-400">还没有消息</p>}
+          {recent.data?.messages.length === 0 && <p className="p-4 text-center text-fs13 text-stone-400">暂无消息</p>}
           {[...(recent.data?.messages ?? [])].reverse().map((message) => (
             <MessageItem
               key={message.id}
               message={message}
               showGroup
-              onReply={(m) => openSend({ group: m.group_id, groupName: m.group_name, source: m.source, replyTo: m })}
-              onTask={(m) => openTask({ title: taskTitle(m.text), project: project.key, source: taskSource(m) })}
+              variant="list"
+              onReply={(m) =>
+                openReply({ group: m.group_id, replyTo: m, handle: m.attention ? m.id : undefined })
+              }
+              onTask={(m) => openTask(taskDraftFrom([m], project.key))}
             />
           ))}
         </div>
@@ -224,21 +229,17 @@ function Tile({
         <span className="text-stone-400">{icon}</span>
         {label}
       </div>
-      <div className={clsx('mt-1.5 text-fs24 font-semibold tabular-nums', alert && value > 0 && 'text-red-600 dark:text-red-400')}>
-        {value}
+      {/* 说明放在数字同一行：各卡同高，不留空。 */}
+      <div className="mt-1.5 flex items-baseline gap-2">
+        <span className={clsx('text-fs24 font-semibold tabular-nums', alert && value > 0 && 'text-red-600 dark:text-red-400')}>{value}</span>
+        {hint && <span className="truncate text-fs12 text-stone-400">{hint}</span>}
       </div>
-      {hint && <div className="text-fs12 text-stone-400">{hint}</div>}
     </div>
   )
 }
 
 function SectionTitle({ title, action }: { title: string; action?: ReactNode }) {
-  return (
-    <div className="mb-3 flex items-center justify-between">
-      <h2 className="text-fs14 font-semibold">{title}</h2>
-      {action}
-    </div>
-  )
+  return <SectionHeader title={title} action={action} />
 }
 
 function GroupCard({ group }: { group: OverviewGroup }) {
@@ -251,7 +252,7 @@ function GroupCard({ group }: { group: OverviewGroup }) {
       <div className="flex items-center gap-2">
         <SourceBadge source={group.source} />
         <span className="min-w-0 flex-1 truncate font-semibold">{group.name}</span>
-        <KindTag name={group.name} />
+        <KindTag kind={group.kind} />
         <CountBadge count={group.awaiting_count} />
       </div>
       <div className="mt-3 rounded-lg bg-stone-50 px-3 py-2 text-fs13 dark:bg-stone-800/50">
@@ -261,15 +262,15 @@ function GroupCard({ group }: { group: OverviewGroup }) {
               <span className="font-medium text-stone-700 dark:text-stone-300">{last.is_me ? '我' : last.sender_name}</span>
               <span className="tabular-nums">{shortTime(last.sent_at)}</span>
             </div>
-            <p className="mt-0.5 truncate text-stone-600 dark:text-stone-300">{last.text.replace(/\s+/g, ' ') || '（无文本）'}</p>
+            <p className="mt-0.5 truncate text-stone-600 dark:text-stone-300">{last.text.replace(/\s+/g, ' ') || '（无文本内容）'}</p>
           </>
         ) : (
-          <p className="text-stone-400">还没有消息</p>
+          <p className="text-stone-400">暂无消息</p>
         )}
       </div>
       <div className="mt-3 flex items-center gap-1.5 text-fs12 text-stone-500" title={watchLabel(group.watch)}>
         <StatusDot watch={group.watch} />
-        {group.watch.error ? '出错' : group.watch.mode === 'realtime' ? '实时' : '轮询'}
+        {watchShort(group.watch)}
         <span className="text-stone-300">·</span>今日 {group.today_count} 条
         <span className="text-stone-300">·</span>
         {relative(group.watch.last_sync_at)}
@@ -278,19 +279,51 @@ function GroupCard({ group }: { group: OverviewGroup }) {
   )
 }
 
+function GroupMenu({ group, onSettings, onRemove }: { group: Group; onSettings: () => void; onRemove: () => void }) {
+  const { bump } = useActions()
+  const toast = useToast()
+  const next: GroupKind = group.kind === 'prod' ? 'test' : 'prod'
+
+  async function setKind() {
+    try {
+      await api.setGroupKind(group.id, next)
+      toast(`已将「${group.name}」设为${next === 'prod' ? '正式群' : '测试群'}`)
+      bump()
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err), 'error')
+    }
+  }
+
+  return (
+    <Menu
+      trigger={(toggle) => (
+        <button onClick={toggle} className={iconButton} aria-label={`「${group.name}」的更多操作`}>
+          <MoreHorizontal className="size-4" />
+        </button>
+      )}
+      items={[
+        { label: '群设置', onClick: onSettings },
+        { label: next === 'prod' ? '设为正式群（发送前二次确认）' : '设为测试群', onClick: () => void setKind() },
+        'divider',
+        { label: '停止监测…', onClick: onRemove, danger: true },
+      ]}
+    />
+  )
+}
+
 function FixesTab() {
   const levels = [
-    { id: 'L0', name: '自动', text: '文案、样式、配置等小改，有测试覆盖：AI 修复、测试、部署到测试环境，上正式前等你批准。' },
-    { id: 'L1', name: 'AI 修、你审', text: '改到逻辑：AI 修复并跑测试，改动进收件箱等你批准或打回。' },
-    { id: 'L2', name: '只分析', text: '原因不清或要改多处：AI 给出原因、复现步骤和方案，由你决定。' },
-    { id: 'L3', name: '不碰', text: '权限、支付、数据迁移、安全、生产配置：只建任务并通知你。' },
+    { id: 'L0', name: '自动', text: '文案、样式、配置等小范围改动且有测试覆盖：AI 修复、测试并部署到测试环境，上线正式环境前需批准。' },
+    { id: 'L1', name: 'AI 修复，人工审核', text: '涉及业务逻辑：AI 修复并运行测试，改动进入收件箱，待批准或退回。' },
+    { id: 'L2', name: '只分析', text: '原因不明或改动面较大：AI 提供原因分析、复现步骤和方案，由人工决定。' },
+    { id: 'L3', name: '禁止改动', text: '权限、支付、数据迁移、安全、生产配置：仅创建任务并通知。' },
   ]
   return (
     <div className="space-y-4">
       <ComingSoon title="AI 修复与部署" icon={<GitPullRequest className="size-4" />}>
-        群里的 bug 反馈会先转成任务，再按下面的分级交给 AI 处理。AI 自评的级别会用改动行数、是否碰到禁区、测试结果再核一遍，不满足就降级；部署起步每次都要你审核。
+        群内的 bug 反馈先转为任务，再按以下分级交由 AI 处理。AI 自评的级别会根据改动行数、是否涉及禁区和测试结果复核，不满足条件则降级。初期每次部署均需人工审核。
       </ComingSoon>
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         {levels.map((level) => (
           <div key={level.id} className="rounded-xl border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900">
             <div className="flex items-center gap-2">
@@ -308,11 +341,14 @@ function FixesTab() {
 }
 
 function SettingsTab({ project }: { project: OverviewProject }) {
-  const { version, bump } = useDeck()
+  const { versions } = useData()
+  const { bump } = useActions()
   const toast = useToast()
-  const groups = useLoad(() => api.groups(), [version])
+  const groups = useLoad(() => api.groups(), [versions.groups, versions.health])
   const [adding, setAdding] = useState(false)
   const [removing, setRemoving] = useState<Group | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [groupSettings, setGroupSettings] = useState<Group | null>(null)
   const [busy, setBusy] = useState(false)
   const mine = (groups.data?.groups ?? []).filter((g) => g.project === project.key)
 
@@ -321,7 +357,7 @@ function SettingsTab({ project }: { project: OverviewProject }) {
     setBusy(true)
     try {
       await api.removeGroup(removing.id)
-      toast(`已不再监测「${removing.name}」`)
+      toast(`已停止监测「${removing.name}」`)
       setRemoving(null)
       bump()
     } catch (err) {
@@ -333,6 +369,10 @@ function SettingsTab({ project }: { project: OverviewProject }) {
 
   return (
     <div className="space-y-8">
+      <section>
+        <SectionTitle title="项目信息" action={<Button size="sm" onClick={() => setEditing(true)}>编辑项目</Button>} />
+        <p className="text-fs13 text-stone-500">{project.name} · {project.repo || '未关联仓库'}。简称 {project.key} 保持不变。</p>
+      </section>
       <section>
         <SectionTitle
           title="监测的群"
@@ -346,65 +386,65 @@ function SettingsTab({ project }: { project: OverviewProject }) {
         {groups.error && <ErrorBar message={groups.error} onRetry={groups.reload} />}
         {groups.loading && <Skeleton className="h-24 w-full" />}
         {groups.data && mine.length === 0 && (
-          <EmptyState icon={<MessagesSquare className="size-5" />} title="还没有群" hint="添加钉钉群或 channel 频道，deck 会持续拉取消息。" />
+          <EmptyState icon={<MessagesSquare className="size-5" />} title="暂无群" hint="添加要监测的群后，deck 会持续同步消息。" />
         )}
         {mine.length > 0 && (
           <div className="overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900">
             <ul className="divide-y divide-stone-100 dark:divide-stone-800">
               {mine.map((group) => (
-                <li key={group.id} className="flex items-center gap-3 px-4 py-3">
-                  <SourceBadge source={group.source} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="truncate font-medium">{group.name}</span>
-                      <KindTag name={group.name} />
-                    </div>
-                    <div className="mt-0.5 flex items-center gap-1.5 text-fs12 text-stone-500">
-                      <span>{sourceName(group.source)}</span>
-                      <span className="text-stone-300">·</span>
-                      <code className="truncate font-mono text-fs11" title={group.remote_id}>
-                        {group.remote_id}
-                      </code>
-                    </div>
-                  </div>
-                  <span className="hidden items-center gap-1.5 text-fs12 text-stone-500 sm:inline-flex" title={watchLabel(group.watch)}>
-                    <StatusDot watch={group.watch} />
-                    {group.watch.error ? '出错' : group.watch.mode === 'realtime' ? '实时' : '轮询'}
-                  </span>
+                <li key={group.id} className="flex items-center gap-1 pr-2">
                   <button
-                    onClick={() => setRemoving(group)}
-                    className="rounded-md p-1.5 text-stone-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10"
-                    title="不再监测"
+                    onClick={() => setGroupSettings(group)}
+                    className="flex min-w-0 flex-1 items-center gap-3 py-3 pl-4 text-left hover:bg-stone-50 dark:hover:bg-stone-800/40"
+                    title="群设置：提醒范围、免打扰、所属项目"
                   >
-                    <Trash2 className="size-4" />
+                    <SourceBadge source={group.source} className="!size-8 !rounded-lg" />
+                    <span className="min-w-0 flex-1">
+                      <span className="line-clamp-2 font-medium [overflow-wrap:anywhere]">{group.name}</span>
+                      <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-fs12 text-stone-500">
+                        <span>{sourceName(group.source)}</span>
+                        <span className="text-stone-300">·</span>
+                        <span className="inline-flex items-center gap-1" title={watchLabel(group.watch)}>
+                          <StatusDot watch={group.watch} />
+                          {watchShort(group.watch)}
+                        </span>
+                        <span className="text-stone-300">·</span>
+                        <span className={clsx(group.kind === 'prod' && 'text-stone-700 dark:text-stone-300')}>
+                          {group.kind === 'prod' ? '正式群' : '测试群'}
+                        </span>
+                      </span>
+                    </span>
                   </button>
+                  <GroupMenu group={group} onSettings={() => setGroupSettings(group)} onRemove={() => setRemoving(group)} />
                 </li>
               ))}
             </ul>
           </div>
         )}
-        <p className="mt-2 text-fs12 text-stone-400">「正式 / 测试」目前按群名里是否含 TEST、测试 自动判断，以后可以手动设。</p>
+        <p className="mt-2 text-fs12 text-stone-400">新增群时按群名识别类型：含 TEST 或「测试」为测试群，其余为正式群。向正式群发送前需二次确认。</p>
       </section>
 
-      <section className="grid gap-3 md:grid-cols-2">
-        <ComingSoon title="AI 不许碰的目录" icon={<ShieldCheck className="size-4" />}>
-          列出 AI 修复时禁止改动的路径，比如支付、权限、数据库迁移。碰到这些目录的改动会自动降到「只分析」。
+      {editing && <ProjectDialog open project={project} onClose={() => setEditing(false)} />}
+      {groupSettings && <GroupSettingsDialog group={groupSettings} onClose={() => setGroupSettings(null)} />}
+      <section className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <ComingSoon title="AI 禁止改动的目录" icon={<ShieldCheck className="size-4" />}>
+          指定 AI 修复时禁止改动的路径，例如支付、权限、数据库迁移。涉及这些路径的改动将自动降级为「只分析」。
         </ComingSoon>
         <ComingSoon title="知识库" icon={<BookOpen className="size-4" />}>
-          放项目背景、常见问题和答复口径，AI 起草回复和分析问题时会先参考这里。
+          存放项目背景、常见问题和答复口径，供 AI 起草回复和分析问题时参考。
         </ComingSoon>
       </section>
 
       <AddGroupDialog open={adding} onClose={() => setAdding(false)} defaultProject={project.key} />
       <ConfirmDialog
         open={!!removing}
-        title="不再监测这个群"
+        title="停止监测该群"
         confirmLabel="移除"
         busy={busy}
         onClose={() => setRemoving(null)}
         onConfirm={remove}
       >
-        移除「{removing?.name}」后，deck 不再拉它的消息，<strong className="text-stone-900 dark:text-stone-100">本地保存的消息也会一起删除</strong>。群本身不受影响。
+        移除「{removing?.name}」后，deck 将停止同步该群消息，<strong className="text-stone-900 dark:text-stone-100">本地已保存的消息也将一并删除</strong>。群本身不受影响。
       </ConfirmDialog>
     </div>
   )

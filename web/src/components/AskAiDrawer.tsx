@@ -1,18 +1,41 @@
 import clsx from 'clsx'
-import { Send, Sparkles, X } from 'lucide-react'
+import { Loader2, Send, Sparkles, Square, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { inputClass } from './ui'
+import { api, type AiAnswer, type AiReference } from '../api'
+import { href } from '../router'
+import { useData } from '../state'
+import { inputClass, Select } from './ui'
 
-const examples = ['总结今天 MX 群里的问题', '这周有哪些 bug 还没修？', '谁 @ 了我还没回？', '帮我写一份今天的日报']
+const examples = ['总结所选范围最近反馈的问题', '所选项目还有哪些未完成任务？', '哪些消息还需要我处理？', '根据所选范围起草项目小结']
 
-interface Turn {
+type Turn = {
   question: string
+  scope: string
+  state: 'loading' | 'done' | 'error'
+  result?: AiAnswer
+  error?: string
+}
+
+/** 范围编码：'' 不带本地上下文，'p:key' 整个项目，'g:id' 单个群。 */
+function scopeBody(scope: string): { project?: string; group?: number } {
+  if (scope.startsWith('p:')) return { project: scope.slice(2) }
+  if (scope.startsWith('g:')) return { group: Number(scope.slice(2)) }
+  return {}
+}
+
+export function referenceHref(ref: AiReference) {
+  return ref.kind === 'task' ? href({ name: 'tasks' }) : href({ name: 'messages', group: ref.group_id, anchor: ref.id })
 }
 
 export function AskAiDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { overview } = useData()
   const [text, setText] = useState('')
+  const [scope, setScope] = useState('')
   const [turns, setTurns] = useState<Turn[]>([])
   const input = useRef<HTMLTextAreaElement>(null)
+  const pending = useRef<AbortController | null>(null)
+  const end = useRef<HTMLDivElement>(null)
+  const busy = turns.some((turn) => turn.state === 'loading')
 
   useEffect(() => {
     if (!open) return
@@ -22,10 +45,36 @@ export function AskAiDrawer({ open, onClose }: { open: boolean; onClose: () => v
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
 
-  function ask(question: string) {
-    if (!question.trim()) return
-    setTurns((all) => [...all, { question: question.trim() }])
+  useEffect(() => () => pending.current?.abort(), [])
+  useEffect(() => { end.current?.scrollIntoView?.({ block: 'end' }) }, [turns])
+
+  function update(index: number, patch: Partial<Turn>) {
+    setTurns((all) => all.map((turn, i) => (i === index ? { ...turn, ...patch } : turn)))
+  }
+
+  async function ask(raw: string) {
+    const question = raw.trim()
+    if (!question || busy) return
+    const index = turns.length
+    const controller = new AbortController()
+    pending.current = controller
+    setTurns((all) => [...all, { question, scope, state: 'loading' }])
     setText('')
+    try {
+      const result = await api.askAi({ question, ...scopeBody(scope) }, controller.signal)
+      if (!controller.signal.aborted) update(index, { state: 'done', result })
+    } catch (err) {
+      if (controller.signal.aborted) update(index, { state: 'error', error: '已停止等待；已送达模型服务的请求仍可能完成并计费' })
+      else update(index, { state: 'error', error: err instanceof Error ? err.message : String(err) })
+    } finally {
+      if (pending.current === controller) pending.current = null
+    }
+  }
+
+  function scopeLabel(value: string) {
+    if (value.startsWith('p:')) return overview?.find((p) => p.key === value.slice(2))?.name ?? value.slice(2)
+    if (value.startsWith('g:')) return overview?.flatMap((p) => p.groups).find((g) => g.id === Number(value.slice(2)))?.name ?? '群'
+    return ''
   }
 
   return (
@@ -56,7 +105,7 @@ export function AskAiDrawer({ open, onClose }: { open: boolean; onClose: () => v
           {turns.length === 0 && (
             <div>
               <p className="text-fs13 leading-relaxed text-stone-500 dark:text-stone-400">
-                以后可以直接问 deck 里的数据：各群的消息、你的回复、任务和操作记录。比如：
+                选择范围后，使用其中最近最多 100 条消息和 50 条任务；不选范围则不附带本地数据。每次独立提问，不自动提交历史问答。例如：
               </p>
               <div className="mt-3 flex flex-col gap-2">
                 {examples.map((example) => (
@@ -73,16 +122,45 @@ export function AskAiDrawer({ open, onClose }: { open: boolean; onClose: () => v
           )}
           {turns.map((turn, i) => (
             <div key={i} className="space-y-2">
-              <div className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-stone-900 px-3.5 py-2 text-stone-50 dark:bg-stone-100 dark:text-stone-900">
+              <div className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-stone-900 px-3.5 py-2 break-words whitespace-pre-wrap text-stone-50 dark:bg-stone-100 dark:text-stone-900">
                 {turn.question}
+                {turn.scope && <span className="mt-0.5 block text-fs11 opacity-60">范围：{scopeLabel(turn.scope)}</span>}
               </div>
-              <div className="w-fit max-w-[85%] rounded-2xl rounded-bl-md bg-stone-100 px-3.5 py-2 text-stone-600 dark:bg-stone-800 dark:text-stone-300">
-                AI 问答即将推出：接上模型后，会在这里根据 deck 的数据回答。
+              <div className="w-fit max-w-[92%] rounded-2xl rounded-bl-md bg-stone-100 px-3.5 py-2 text-stone-700 dark:bg-stone-800 dark:text-stone-200">
+                {turn.state === 'loading' && (
+                  <span className="inline-flex items-center gap-2 text-stone-500">
+                    <Loader2 className="size-3.5 animate-spin" />
+                    思考中…
+                    <button onClick={() => pending.current?.abort()} className="inline-flex items-center gap-1 text-fs12 underline">
+                      <Square className="size-3" />停止
+                    </button>
+                  </span>
+                )}
+                {turn.state === 'error' && <span role="alert" className="break-words text-red-600 dark:text-red-400">{turn.error}</span>}
+                {turn.state === 'done' && turn.result && <Answer result={turn.result} onNavigate={onClose} />}
               </div>
             </div>
           ))}
+          <div ref={end} />
         </div>
         <div className="border-t border-stone-100 p-3 dark:border-stone-800">
+          <label className="mb-2 flex items-center gap-2 text-fs12 text-stone-500">
+            <span className="shrink-0">范围</span>
+            <Select
+              field
+              value={scope}
+              options={[
+                { id: '', label: '不带本地数据（仅提问）' },
+                ...(overview ?? []).flatMap((project) => [
+                  { id: `p:${project.key}`, label: `整个项目：${project.name}`, section: project.name },
+                  ...project.groups.map((group) => ({ id: `g:${group.id}`, label: `群：${group.name}` })),
+                ]),
+              ]}
+              onChange={setScope}
+              label="数据范围"
+              className="!h-8 min-w-0 flex-1 !text-fs13"
+            />
+          </label>
           <div className="flex items-end gap-2">
             <textarea
               ref={input}
@@ -95,12 +173,12 @@ export function AskAiDrawer({ open, onClose }: { open: boolean; onClose: () => v
                 }
               }}
               rows={2}
-              placeholder="问点什么…（Enter 发送）"
+              placeholder="输入问题（Enter 发送）；选择范围后才会带上对应的本地数据"
               className={`${inputClass} resize-none`}
             />
             <button
               onClick={() => ask(text)}
-              disabled={!text.trim()}
+              disabled={!text.trim() || busy}
               className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-stone-900 text-stone-50 hover:bg-stone-700 disabled:opacity-40 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-300"
               aria-label="发送"
             >
@@ -110,5 +188,30 @@ export function AskAiDrawer({ open, onClose }: { open: boolean; onClose: () => v
         </div>
       </aside>
     </>
+  )
+}
+
+function Answer({ result, onNavigate }: { result: AiAnswer; onNavigate: () => void }) {
+  const { answer, references, context, usage } = result
+  return (
+    <div className="space-y-2">
+      <p className="leading-relaxed break-words whitespace-pre-wrap">{answer}</p>
+      {references.length > 0 && (
+        <ul className="space-y-1 border-t border-stone-200 pt-2 text-fs12 dark:border-stone-700">
+          {references.map((ref) => (
+            <li key={`${ref.kind}-${ref.id}`}>
+              <a href={referenceHref(ref)} onClick={onNavigate} className="block min-w-0 rounded px-1 py-0.5 hover:bg-stone-200/70 dark:hover:bg-stone-700/60">
+                <span className="text-stone-400">{ref.kind === 'task' ? '任务' : '消息'} #{ref.id} · </span>
+                <span className="font-medium">{ref.title}</span>
+                <span className="line-clamp-2 break-words text-stone-500">{ref.text}</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-fs11 text-stone-400">
+        参考 {context.messages} 条消息、{context.tasks} 个任务{context.limited ? '（内容过多，已截取）' : ''} · {usage.input_tokens + usage.output_tokens} token
+      </p>
+    </div>
   )
 }

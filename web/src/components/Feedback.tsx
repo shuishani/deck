@@ -8,7 +8,7 @@ export function Skeleton({ className }: { className?: string }) {
 
 export function CardSkeleton({ rows = 3 }: { rows?: number }) {
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
       {Array.from({ length: rows }, (_, i) => (
         <div key={i} className="rounded-xl border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900">
           <Skeleton className="h-4 w-2/5" />
