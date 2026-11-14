@@ -105,7 +105,7 @@ export function Switch({
   disabled?: boolean
 }) {
   return (
-    <label className={clsx('inline-flex items-center gap-2 select-none', disabled ? 'cursor-not-allowed' : 'cursor-pointer')}>
+    <label className={clsx('relative inline-flex items-center gap-2 select-none', disabled ? 'cursor-not-allowed' : 'cursor-pointer')}>
       <button
         type="button"
         role="switch"
@@ -223,7 +223,12 @@ export function Select<T extends string>({
     const inside = (target: EventTarget | null) =>
       !!target && (list.current?.contains(target as Node) || button.current?.contains(target as Node))
     const onDown = (event: PointerEvent) => !inside(event.target) && close()
-    const onScroll = (event: Event) => !list.current?.contains(event.target as Node) && close()
+    const onScroll = (event: Event) => {
+      if (list.current?.contains(event.target as Node)) return
+      // 打开前的滚动事件可能延迟到达；锚点没移动时，不关闭菜单。
+      const current = button.current?.getBoundingClientRect()
+      if (!current || current.top !== anchor.top || current.left !== anchor.left) close()
+    }
     const onKey = (event: KeyboardEvent) => event.key === 'Escape' && close()
     window.addEventListener('pointerdown', onDown)
     window.addEventListener('scroll', onScroll, true)

@@ -19,8 +19,6 @@ const CHATS = [
   { id: 'direct', label: '单聊' },
 ] as const
 
-const customReminder = (rules: GroupRules) => rules.scope !== 'all' || !!(rules.quiet_start && rules.quiet_end)
-
 /** 设置 → 会话：所有群聊和单聊，点开改监听、AI、提醒和所属项目。 */
 export function GroupList({ initialSource }: { initialSource?: Source }) {
   const { versions, overview } = useData()
@@ -49,12 +47,7 @@ export function GroupList({ initialSource }: { initialSource?: Source }) {
     <Section
       id="chats"
       title="会话列表"
-      description={
-        <>
-          点一个会话，改监听、AI 分析、提醒范围和所属项目。停止监听后不再拉取，已有消息保留。新群在项目里添加。
-          {errors > 0 && <span className="text-red-600 dark:text-red-400"> {errors} 个会话监听异常，已标红并置顶。</span>}
-        </>
-      }
+      description={errors > 0 ? <span className="text-red-600 dark:text-red-400">{errors} 个会话监听异常</span> : undefined}
     >
       <div className="px-3 py-2.5">
         <GroupFilterBar
@@ -63,7 +56,7 @@ export function GroupList({ initialSource }: { initialSource?: Source }) {
           onChange={setFilter}
           projects={projects.map((key) => ({ key, name: projectName(key) }))}
           fields={all.length ? undefined : []}
-          placeholder={chat === 'group' ? '搜索群名或项目' : '搜索联系人'}
+          placeholder={chat === 'group' ? '搜索会话' : '搜索联系人'}
           leading={
             <div className="grid h-8 shrink-0 grid-cols-2 gap-1 rounded-lg bg-stone-100 p-1 max-md:h-10 dark:bg-stone-800/70" role="tablist" aria-label="会话类型">
               {CHATS.map((item) => (
@@ -127,7 +120,6 @@ export function GroupList({ initialSource }: { initialSource?: Source }) {
 function GroupRow({ group, project, onOpen }: { group: Group; project?: string; onOpen: () => void }) {
   const { scope, keywords, quiet_start, quiet_end } = group.rules
   const error = watchTone(group.watch) === 'error'
-  const custom = customReminder(group.rules) || group.mode === 'listen'
   const status = (
     <span className={clsx('inline-flex items-center gap-1.5', error && 'text-red-600 dark:text-red-400')} title={watchLabel(group.watch)}>
       <StatusDot watch={group.watch} />
@@ -149,7 +141,6 @@ function GroupRow({ group, project, onOpen }: { group: Group; project?: string; 
       </span>
       <span className="hidden w-28 shrink-0 text-fs12 text-stone-600 md:block dark:text-stone-300">{status}</span>
       <span className="flex shrink-0 flex-wrap items-center justify-end gap-1.5 md:w-52">
-        {!custom && <span className="text-fs12 text-stone-400">默认</span>}
         {group.mode === 'listen' && (
           <span className="rounded-full bg-stone-100 px-2 text-fs11 leading-5 text-stone-600 dark:bg-stone-800 dark:text-stone-300">AI 关</span>
         )}

@@ -7,11 +7,8 @@ import { EmptyState, ErrorBar, Skeleton } from '../../components/Feedback'
 import { useToast } from '../../components/Toast'
 import { Button, ConfirmDialog, Dialog } from '../../components/ui'
 import { copyText } from '../../clipboard'
-import { fullTime, relative, shortTime } from '../../format'
+import { fullTime, relative } from '../../format'
 import { useLoad } from '../../state'
-
-// 手机上只显示图标：放大到可点的尺寸，文字留给读屏。
-const DEVICE_ACTION = 'max-sm:size-10 max-sm:px-0'
 
 export function Access() {
   const toast = useToast()
@@ -75,7 +72,6 @@ export function Access() {
       <section className="space-y-4">
       <SectionHeader
         title="已登录的设备"
-        description="每台设备独立登录。禁用后暂停访问，可随时重新启用；移除后需重新配对。"
         action={
           <Button variant="primary" onClick={() => setAdding(true)} disabled={!data}>
             <Plus className="size-3.5" />
@@ -109,14 +105,15 @@ export function Access() {
               </span>
               <button
                 onClick={() => setViewing(session)}
-                className={clsx('min-w-0 flex-1 text-left', session.disabled_at && 'opacity-60')}
+                disabled={busy}
+                className={clsx('min-h-11 min-w-0 flex-1 text-left', session.disabled_at && 'opacity-60')}
                 title="查看设备详情"
               >
-                <div className="flex items-center gap-2">
-                  <span className="truncate font-medium">{deviceName(session.user_agent)}</span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="min-w-0 truncate font-medium">{deviceName(session.user_agent)}</span>
                   {session.current && (
                     <span className="rounded bg-accent-50 px-1.5 text-fs11 leading-[18px] font-medium text-accent-700 dark:bg-accent-500/15 dark:text-accent-100">
-                      本机
+                      当前设备
                     </span>
                   )}
                   {session.disabled_at && (
@@ -131,10 +128,6 @@ export function Access() {
                   )}
                 </div>
                 <p className="truncate text-fs12 text-stone-500 dark:text-stone-400">
-                  <span>经{networkOf(session.ip)}</span>
-                  <span className="mx-1.5 text-stone-300 dark:text-stone-600">·</span>
-                  <span title={fullTime(session.created_at)}>{shortTime(session.created_at)} 登录</span>
-                  <span className="mx-1.5 text-stone-300 dark:text-stone-600">·</span>
                   {session.current
                     ? '正在使用'
                     : session.disabled_at
@@ -142,37 +135,25 @@ export function Access() {
                       : `${relative(session.last_seen_at)}活跃`}
                 </p>
               </button>
-              {session.current ? (
-                <Button variant="ghost" size="sm" onClick={() => setLoggingOut(true)} className={clsx(DEVICE_ACTION, 'text-stone-500')}>
-                  <LogOut className="size-3.5 max-sm:size-4" />
-                  <span className="max-sm:sr-only">退出登录</span>
-                </Button>
-              ) : (
-                <>
-                  {session.disabled_at ? (
-                    <Button variant="ghost" size="sm" onClick={() => void toggle(session)} disabled={busy} className={DEVICE_ACTION}>
-                      <CircleCheck className="size-3.5 max-sm:size-4" />
-                      <span className="max-sm:sr-only">启用</span>
-                    </Button>
-                  ) : (
-                    <Button variant="ghost" size="sm" onClick={() => setDisabling(session)} className={clsx(DEVICE_ACTION, 'text-stone-500 hover:text-amber-600')}>
-                      <Ban className="size-3.5 max-sm:size-4" />
-                      <span className="max-sm:sr-only">禁用</span>
-                    </Button>
-                  )}
-                  <Button variant="ghost" size="sm" onClick={() => setRemoving(session)} className={clsx(DEVICE_ACTION, 'text-stone-500 hover:text-red-600')}>
-                    <Trash2 className="size-3.5 max-sm:size-4" />
-                    <span className="max-sm:sr-only">移除</span>
-                  </Button>
-                </>
-              )}
+              <Button variant="ghost" size="sm" onClick={() => setViewing(session)} disabled={busy} aria-label={`管理 ${deviceName(session.user_agent)}`} className="max-sm:h-11">
+                管理
+              </Button>
             </li>
           ))}
         </ul>
       )}
       </section>
 
-      <DeviceDialog session={viewing} primary={primary} onClose={() => setViewing(null)} />
+      <DeviceDialog
+        session={viewing}
+        primary={primary}
+        busy={busy}
+        onClose={() => setViewing(null)}
+        onLogout={() => (setViewing(null), setLoggingOut(true))}
+        onDisable={(session) => (setViewing(null), setDisabling(session))}
+        onEnable={(session) => (setViewing(null), void toggle(session))}
+        onRemove={(session) => (setViewing(null), setRemoving(session))}
+      />
       {primary && <AddDeviceDialog open={adding} onClose={() => setAdding(false)} address={primary} />}
       <ConfirmDialog
         open={!!removing}
@@ -182,7 +163,7 @@ export function Access() {
         onClose={() => setRemoving(null)}
         onConfirm={() => removing && void remove(removing)}
       >
-        {`${removing ? deviceName(removing.user_agent) : ''} 将立即退出，需使用新的登录码重新登录。`}
+        {`${removing ? deviceName(removing.user_agent) : ''} 的登录凭据将失效。再次访问需重新配对。`}
       </ConfirmDialog>
       <ConfirmDialog
         open={!!disabling}
@@ -192,7 +173,7 @@ export function Access() {
         onClose={() => setDisabling(null)}
         onConfirm={() => disabling && void toggle(disabling)}
       >
-        {`${disabling ? deviceName(disabling.user_agent) : ''} 将立即无法访问 deck。登录状态会保留，在此点击「启用」即可恢复，无需重新配对。`}
+        {`${disabling ? deviceName(disabling.user_agent) : ''} 将无法访问 deck。登录状态保留，可重新启用。`}
       </ConfirmDialog>
       <ConfirmDialog
         open={loggingOut}
@@ -202,7 +183,7 @@ export function Access() {
         onClose={() => setLoggingOut(false)}
         onConfirm={() => void signOut()}
       >
-        退出后，本设备需使用新的登录码重新登录。
+        退出后，当前设备需重新配对登录。
       </ConfirmDialog>
     </div>
   )
@@ -215,7 +196,7 @@ function Addresses({ addresses, primary, plan, onSaved }: { addresses: AccessAdd
     setSaving(true)
     try {
       await api.pinEntry(primary.url)
-      toast('统一入口已固定；网络路由尚未修改，请按说明确认远程通路', 'info')
+      toast('入口地址已保存，网络路由未修改', 'info')
       await onSaved()
     } catch (error) {
       toast(error instanceof Error ? error.message : String(error), 'error')
@@ -228,21 +209,15 @@ function Addresses({ addresses, primary, plan, onSaved }: { addresses: AccessAdd
   const others = addresses.filter((a) => a !== primary)
   return (
     <section className="space-y-3">
-      <SectionHeader
-        title="访问地址"
-        description={
-          primary.pinned
-            ? '固定入口：切换 Wi-Fi 或 Tailscale 时无需更换地址，网络恢复后自动重连，无需重新登录。'
-            : '请先固定入口。当前为候选地址，不代表远程网络已连通。'
-        }
-      />
+      <SectionHeader title="访问地址" />
       <div className="space-y-3 rounded-xl border border-stone-200 bg-white px-4 py-3.5 dark:border-stone-800 dark:bg-stone-900">
         <div className="flex items-center gap-3">
           <div className="min-w-0 flex-1">
             <p className="flex flex-wrap items-center gap-1.5">
               <span className="truncate font-mono text-fs15 font-medium">{displayUrl(primary.url)}</span>
               {isHere(primary) && <Badge tone="accent">当前使用</Badge>}
-              {!primary.secure && primary.kind !== 'local' && <Badge tone="amber">明文</Badge>}
+              {primary.pinned && <Badge tone="stone">固定入口</Badge>}
+              {!primary.secure && primary.kind !== 'local' && <Badge tone="amber">未加密</Badge>}
             </p>
             <p className="mt-0.5 flex items-center gap-1.5 text-fs12 text-stone-500 dark:text-stone-400">
               <span
@@ -258,16 +233,24 @@ function Addresses({ addresses, primary, plan, onSaved }: { addresses: AccessAdd
           </div>
           <CopyIcon text={primary.url} label="复制地址" />
         </div>
-        {!primary.pinned && plan && <Button onClick={pin} disabled={saving}>{saving ? '保存中…' : '固定为统一入口（仅保存，不发布路由）'}</Button>}
+        {!primary.usable && <p role="alert" className="text-fs12 text-red-600 dark:text-red-400">入口地址当前不可用，请检查服务器地址及监听配置。</p>}
+        {!primary.secure && primary.kind !== 'local' && <p className="text-fs12 text-amber-700 dark:text-amber-300">此地址使用 HTTP，仅应在可信网络中访问。</p>}
+        {!primary.pinned && plan && (
+          <div className="space-y-1.5">
+            <Button onClick={pin} disabled={saving}>{saving ? '保存中…' : '固定入口'}</Button>
+            <p className="text-fs12 text-stone-500">仅保存地址，不修改网络路由。</p>
+          </div>
+        )}
         {primary.kind === 'lan' && primary.remote !== 'active' && plan && (
           <RemoteSetup plan={plan} />
         )}
       </div>
       {others.length > 0 && (
         <details className="group">
-          <summary className="cursor-pointer text-fs12 text-stone-500 select-none hover:text-stone-700 dark:text-stone-400 dark:hover:text-stone-200">
-            网络诊断地址（非统一入口，请勿交替使用）
+          <summary className="min-h-11 content-center cursor-pointer rounded-md text-fs12 text-stone-500 select-none hover:text-stone-700 focus-visible:outline-2 focus-visible:outline-accent-500 dark:text-stone-400 dark:hover:text-stone-200">
+            其他地址
           </summary>
+          <p className="mt-1 text-fs12 text-stone-500">仅用于网络诊断，日常访问请使用上方入口。</p>
           <ul className="mt-2 divide-y divide-stone-100 overflow-hidden rounded-xl border border-stone-200 bg-white dark:divide-stone-800 dark:border-stone-800 dark:bg-stone-900">
             {others.map((address) => (
               <li key={address.url} className="flex items-center gap-3 px-4 py-2.5">
@@ -294,19 +277,27 @@ function Addresses({ addresses, primary, plan, onSaved }: { addresses: AccessAdd
 
 function RemoteSetup({ plan }: { plan: EntryPlan }) {
   return (
-    <div className="space-y-2 rounded-lg bg-stone-50 px-3 py-2.5 text-fs12 leading-relaxed text-stone-600 dark:bg-stone-950 dark:text-stone-300">
-      <p>同一 Wi-Fi 下，无论手机是否开启 Tailscale，均使用上方地址；在外网开启 Tailscale 后也无需更换。</p>
-      {!plan.running && <p className="text-amber-700 dark:text-amber-300">电脑 Tailscale 尚未运行，远程通路未就绪。</p>}
-      {plan.remote === 'pending' ? (
-        <p>单主机路由 <span className="font-mono">{plan.route}</span> 已宣告、待批准。请在 Tailscale 管理后台批准并检查访问规则；批准前远程访问不可用。</p>
-      ) : (
-        <>
-          <p>{plan.routes_known ? '远程通路尚未配置。以下命令保留已有路由，仅新增本机地址；请确认网络影响后在电脑上执行，再到管理后台批准。' : '读取现有路由失败，为避免覆盖已有配置，暂不生成路由修改命令。'}</p>
-          {plan.command && <CopyRow label="宣告路由" value={plan.command} />}
-          {plan.rollback_command && <CopyRow label="恢复原路由" value={plan.rollback_command} />}
-        </>
-      )}
-      {plan.warnings.map((warning) => <p key={warning} className="text-stone-500 dark:text-stone-400">{warning}</p>)}
+    <div className="space-y-2 text-fs12 leading-relaxed text-stone-600 dark:text-stone-300">
+      {!plan.running && <p role="status" className="text-amber-700 dark:text-amber-300">Tailscale 未运行，远程访问不可用。</p>}
+      {!plan.routes_known
+        ? <p role="alert" className="text-amber-700 dark:text-amber-300">无法读取现有路由，暂不提供配置命令。</p>
+        : plan.running && <p role="status" className="text-amber-700 dark:text-amber-300">{plan.remote === 'pending' ? '远程路由待批准，暂不可远程访问。' : '远程访问尚未配置。'}</p>}
+      <details>
+        <summary className="min-h-11 content-center cursor-pointer rounded-md text-stone-500 focus-visible:outline-2 focus-visible:outline-accent-500 dark:text-stone-400">远程访问设置</summary>
+        <div className="space-y-2 rounded-lg bg-stone-50 px-3 py-2.5 dark:bg-stone-950">
+          <p>配置完成后，可通过同一地址在局域网或 Tailscale 网络中访问。</p>
+          {plan.remote === 'pending' ? (
+            <p>路由 <span className="font-mono">{plan.route}</span> 待批准。请在 Tailscale 管理后台批准路由并检查访问规则。</p>
+          ) : (
+            <>
+              <p>{plan.routes_known ? '以下命令会修改 Tailscale 路由。确认影响后在运行 deck 的电脑上执行，随后须由管理员批准。' : '为避免覆盖现有路由，须先恢复 Tailscale 状态查询。'}</p>
+              {plan.command && <CopyRow label="宣告路由" value={plan.command} />}
+              {plan.rollback_command && <CopyRow label="恢复原路由" value={plan.rollback_command} />}
+            </>
+          )}
+          {plan.warnings.map((warning) => <p key={warning} className="text-stone-500 dark:text-stone-400">{warning}</p>)}
+        </div>
+      </details>
     </div>
   )
 }
@@ -347,7 +338,7 @@ function Badge({ tone, children }: { tone: 'accent' | 'stone' | 'amber'; childre
 
 function networkOf(ip: string) {
   if (!ip) return '未知'
-  if (ip === '127.0.0.1' || ip === '::1') return '本机'
+  if (ip === '127.0.0.1' || ip === '::1') return '服务器本机'
   const [a, b] = ip.split('.').map(Number)
   if (a === 100 && b >= 64 && b <= 127) return 'Tailscale'
   if (a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31)) return '局域网'
@@ -357,11 +348,21 @@ function networkOf(ip: string) {
 function DeviceDialog({
   session,
   primary,
+  busy,
   onClose,
+  onLogout,
+  onDisable,
+  onEnable,
+  onRemove,
 }: {
   session: DeviceSession | null
   primary: AccessAddress | undefined
+  busy: boolean
   onClose: () => void
+  onLogout: () => void
+  onDisable: (session: DeviceSession) => void
+  onEnable: (session: DeviceSession) => void
+  onRemove: (session: DeviceSession) => void
 }) {
   if (!session) return null
   const status = session.current ? '当前设备' : session.disabled_at ? `已禁用（${fullTime(session.disabled_at)}）` : '正常'
@@ -381,12 +382,22 @@ function DeviceDialog({
     <Dialog
       open
       onClose={onClose}
-      title="设备详情"
+      title="设备管理"
       width="max-w-md"
       footer={
-        <Button variant="primary" onClick={onClose}>
-          关闭
-        </Button>
+        <>
+          <Button onClick={onClose} disabled={busy} className="max-sm:h-11">关闭</Button>
+          {session.current ? (
+            <Button onClick={onLogout} disabled={busy} className="max-sm:h-11"><LogOut className="size-3.5" />退出登录</Button>
+          ) : (
+            <>
+              {session.disabled_at
+                ? <Button onClick={() => onEnable(session)} disabled={busy} className="max-sm:h-11"><CircleCheck className="size-3.5" />启用</Button>
+                : <Button onClick={() => onDisable(session)} disabled={busy} className="max-sm:h-11"><Ban className="size-3.5" />禁用</Button>}
+              <Button variant="danger" onClick={() => onRemove(session)} disabled={busy} className="max-sm:h-11"><Trash2 className="size-3.5" />移除</Button>
+            </>
+          )}
+        </>
       }
     >
       <dl className="grid grid-cols-[5.5rem_1fr] gap-x-3 gap-y-2.5 text-fs13">
@@ -400,7 +411,7 @@ function DeviceDialog({
       {off && primary && (
         <p className="mt-4 flex items-start gap-1.5 text-fs12 leading-relaxed text-amber-700 dark:text-amber-300">
           <ShieldAlert className="mt-0.5 size-3.5 shrink-0" />
-          该设备未通过统一地址登录。请在设备上打开 {displayUrl(primary.url)}，通过「添加设备」扫码重新登录，之后可移除此旧登录。
+          此设备使用其他地址登录。请通过 {displayUrl(primary.url)} 重新配对后，再移除旧登录。
         </p>
       )}
     </Dialog>
@@ -446,19 +457,24 @@ function AddDeviceDialog({
       width="max-w-md"
       footer={
         <Button variant="primary" onClick={onClose}>
-          完成
+          关闭
         </Button>
       }
     >
       <div className="space-y-4">
         {pairing ? (
           <PairingView pairing={pairing} address={address} onRegenerate={() => void generate()} busy={busy} />
-        ) : (
+        ) : busy ? (
           <div className="flex justify-center">
             <Skeleton className="size-[216px]" />
           </div>
+        ) : null}
+        {error && (
+          <div className="space-y-3">
+            <p role="alert" className="text-fs13 text-red-600">{error}</p>
+            <Button onClick={() => void generate()} disabled={busy}>重试</Button>
+          </div>
         )}
-        {error && <p className="text-fs13 text-red-600">{error}</p>}
       </div>
     </Dialog>
   )
@@ -532,7 +548,7 @@ function CopyIcon({ text, label }: { text: string; label: string }) {
       onClick={() => void copy()}
       title={label}
       aria-label={label}
-      className="shrink-0 rounded-md p-1.5 text-stone-400 hover:bg-stone-100 hover:text-stone-600 dark:hover:bg-stone-800"
+      className="flex size-11 shrink-0 items-center justify-center rounded-md text-stone-500 hover:bg-stone-100 hover:text-stone-600 focus-visible:outline-2 focus-visible:outline-accent-500 dark:text-stone-400 dark:hover:bg-stone-800"
     >
       {copied ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}
     </button>
@@ -549,11 +565,11 @@ function CopyRow({ label, value, big }: { label: string; value: string; big?: bo
   }
   return (
     <div className="flex items-center gap-2 rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 dark:border-stone-700 dark:bg-stone-950">
-      <span className="w-10 shrink-0 text-fs12 text-stone-500">{label}</span>
+      <span className="w-16 shrink-0 text-fs12 text-stone-500">{label}</span>
       <span
         className={clsx(
-          'min-w-0 flex-1 truncate font-mono select-all',
-          big ? 'text-fs18 font-semibold tracking-[0.2em]' : 'text-fs12 text-stone-600 dark:text-stone-300',
+          'min-w-0 flex-1 font-mono select-all',
+          big ? 'truncate text-fs18 font-semibold tracking-[0.2em]' : 'text-fs12 break-all text-stone-600 dark:text-stone-300',
         )}
         title={value}
       >
@@ -562,7 +578,7 @@ function CopyRow({ label, value, big }: { label: string; value: string; big?: bo
       <button
         type="button"
         onClick={() => void copy()}
-        className="rounded-md p-1.5 text-stone-500 hover:bg-stone-200/70 dark:hover:bg-stone-800"
+        className="flex size-11 shrink-0 items-center justify-center rounded-md text-stone-500 hover:bg-stone-200/70 focus-visible:outline-2 focus-visible:outline-accent-500 dark:hover:bg-stone-800"
         aria-label={`复制${label}`}
       >
         {copied ? <Check className="size-4 text-emerald-600" /> : <Copy className="size-4" />}

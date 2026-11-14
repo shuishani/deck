@@ -76,25 +76,27 @@ export function StatusPill({ tone, children }: { tone: keyof typeof STATUS_TONES
 }
 
 /** 卡片底部的保存条：有改动时出现。 */
-export function SaveBar({ busy, disabled, error, onCancel, onSave }: {
+export function SaveBar({ busy, disabled, error, message = '有未保存的修改', saveLabel = '保存', onCancel, onSave }: {
   busy: boolean
   disabled?: boolean
   error?: string | null
+  message?: string
+  saveLabel?: string
   onCancel: () => void
   onSave: () => void
 }) {
   return (
     <div className="flex items-center gap-2 bg-stone-50 px-4 py-2.5 dark:bg-stone-800/40">
-      <p className={clsx('min-w-0 flex-1 text-fs12', error ? 'text-red-600 dark:text-red-400' : 'text-stone-500')}>{error ?? '有未保存的修改'}</p>
-      <button onClick={onCancel} disabled={busy} className="h-7 rounded-md px-2.5 text-fs12 font-medium text-stone-600 hover:bg-stone-200/60 dark:text-stone-300 dark:hover:bg-stone-700">
+      <p role={error ? 'alert' : 'status'} className={clsx('min-w-0 flex-1 text-fs12', error ? 'text-red-600 dark:text-red-400' : 'text-stone-500')}>{error ?? message}</p>
+      <button onClick={onCancel} disabled={busy} className="h-7 shrink-0 rounded-md px-2.5 text-fs12 font-medium text-stone-600 hover:bg-stone-200/60 max-md:h-11 dark:text-stone-300 dark:hover:bg-stone-700">
         还原
       </button>
       <button
         onClick={onSave}
         disabled={busy || disabled}
-        className="h-7 rounded-md bg-accent-600 px-3 text-fs12 font-medium text-white hover:bg-accent-700 disabled:opacity-50"
+        className="h-7 shrink-0 rounded-md bg-accent-600 px-3 text-fs12 font-medium text-white hover:bg-accent-700 disabled:opacity-50 max-md:h-11"
       >
-        {busy ? '保存中…' : '保存'}
+        {busy ? '保存中…' : saveLabel}
       </button>
     </div>
   )

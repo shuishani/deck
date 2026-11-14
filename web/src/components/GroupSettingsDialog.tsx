@@ -6,10 +6,10 @@ import { useToast } from './Toast'
 import { Button, ConfirmDialog, Dialog, Field, inputClass, Select, Switch } from './ui'
 
 const SCOPES: { id: GroupRules['scope']; label: string; hint: string }[] = [
-  { id: 'all', label: '全部', hint: '@我、回复我的消息和疑似问题都提醒' },
-  { id: 'mentions', label: '仅 @我', hint: '只提醒 @我 或回复我的消息' },
-  { id: 'keywords', label: '关键词', hint: '只提醒包含关键词的消息' },
-  { id: 'off', label: '不提醒', hint: '不进「需回复」、不推送；消息照常保存' },
+  { id: 'all', label: '全部', hint: '@我、回复我及疑似问题都提醒。' },
+  { id: 'mentions', label: '仅 @我', hint: '只提醒 @我或回复我的消息。' },
+  { id: 'keywords', label: '关键词', hint: '只提醒包含关键词的消息。' },
+  { id: 'off', label: '不提醒', hint: '消息仍保存，不进入「需回复」「疑似问题」，也不推送。' },
 ]
 
 export function GroupSettingsDialog({ group, onClose }: { group: Group; onClose: () => void }) {
@@ -108,13 +108,13 @@ export function GroupSettingsDialog({ group, onClose }: { group: Group; onClose:
         <section className="space-y-3">
           <ToggleRow
             label="监听"
-            hint={mode === 'off' ? '已停止：不再拉取新消息，已有消息保留，随时可恢复。' : '拉取新消息，可在 deck 里查看、搜索和回复。'}
+            hint={mode === 'off' ? '已停止接收，已有消息保留' : '接收新消息'}
             checked={mode !== 'off'}
             onChange={(on) => setMode(on ? 'ai' : 'off')}
           />
           <ToggleRow
             label="AI 分析"
-            hint="AI 记住上下文、判断紧急程度、写进日报；关闭后 AI 不读这个会话。"
+            hint={mode === 'ai' ? '分析消息，供问题研判和日报使用' : '关闭后不再分析此会话'}
             checked={mode === 'ai'}
             disabled={mode === 'off'}
             onChange={(on) => setMode(on ? 'ai' : 'listen')}
@@ -122,10 +122,13 @@ export function GroupSettingsDialog({ group, onClose }: { group: Group; onClose:
         </section>
 
         <section className="space-y-3 border-t border-stone-200 pt-4 dark:border-stone-800">
-          <div>
-            <h3 className="text-fs13 font-medium">提醒</h3>
-            <p className="mt-0.5 text-fs12 text-stone-500">哪些消息进「需回复」「疑似问题」和推送；优先于「设置 → 提醒」的全局规则。</p>
-          </div>
+          <details className="text-fs12 text-stone-500 dark:text-stone-400">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between rounded-md focus-visible:outline-2 focus-visible:outline-accent-500 sm:min-h-8 [&::-webkit-details-marker]:hidden">
+              <span className="text-fs13 font-medium text-stone-900 dark:text-stone-100">提醒范围</span>
+              <span className="underline decoration-dotted underline-offset-4">规则说明</span>
+            </summary>
+            <p className="mt-1 leading-relaxed">会话范围决定哪些消息进入「需回复」「疑似问题」；自动推送上线后，推送时间按「设置 → 提醒」的全局规则。选「全部」不会覆盖全局的「不推送」。</p>
+          </details>
           <div className="grid grid-cols-4 gap-1 rounded-lg bg-stone-100 p-1 dark:bg-stone-800/70" role="radiogroup" aria-label="提醒范围">
             {SCOPES.map((scope) => (
               <button
@@ -144,7 +147,9 @@ export function GroupSettingsDialog({ group, onClose }: { group: Group; onClose:
               </button>
             ))}
           </div>
-          <p className="text-fs12 text-stone-500">{SCOPES.find((s) => s.id === rule.scope)?.hint}</p>
+          <p className="text-fs12 text-stone-500">
+            {direct && (rule.scope === 'all' || rule.scope === 'mentions') ? '单聊消息都提醒。' : SCOPES.find((s) => s.id === rule.scope)?.hint}
+          </p>
           {rule.scope === 'keywords' && (
             <Field label="关键词" hint="每行一个，命中任意一个即提醒，不区分大小写">
               <textarea rows={3} value={words} onChange={(e) => setWords(e.target.value)} className={inputClass} />
@@ -152,11 +157,8 @@ export function GroupSettingsDialog({ group, onClose }: { group: Group; onClose:
           )}
 
           <div className="rounded-lg border border-stone-200 p-3 dark:border-stone-800">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-fs13 font-medium">安静时段</p>
-                <p className="text-fs12 text-stone-500">这个会话在时段内不提醒、不推送，结束后未处理的消息重新出现。</p>
-              </div>
+            <div className="flex min-h-11 items-center justify-between gap-3 sm:min-h-8">
+              <p className="text-fs13 font-medium">安静时段</p>
               <Switch checked={quiet} onChange={setQuiet} label={<span className="sr-only">安静时段</span>} />
             </div>
             {quiet && (
@@ -169,7 +171,8 @@ export function GroupSettingsDialog({ group, onClose }: { group: Group; onClose:
                     <input type="time" value={rule.quiet_end || ''} onChange={(e) => setRule({ ...rule, quiet_end: e.target.value || null })} className={inputClass} />
                   </Field>
                 </div>
-                <p className="mt-2 text-fs12 text-stone-400">按运行 deck 的电脑所在时区；可跨午夜，开始和结束相同表示全天。</p>
+                <p className="mt-2 text-fs12 text-stone-500">时段内不提醒、不推送，结束后恢复符合规则的未处理消息。</p>
+                <p className="mt-1 text-fs12 text-stone-400">按运行 deck 的电脑所在时区；可跨午夜，开始和结束相同表示全天。</p>
               </>
             )}
           </div>
@@ -178,7 +181,7 @@ export function GroupSettingsDialog({ group, onClose }: { group: Group; onClose:
 
         {!direct && (
           <section className="space-y-3 border-t border-stone-200 pt-4 dark:border-stone-800">
-            <Field label="所属项目" hint="历史消息保留，已有任务的项目不变">
+            <Field label="所属项目" hint={project !== group.project ? '点击「调整」立即生效，不随底部保存；历史消息保留，已有任务仍留在原项目。' : undefined}>
               <div className="flex gap-2">
                 <Select field value={project} options={(overview ?? []).map((p) => ({ id: p.key, label: p.name }))} onChange={setProject} label="所属项目" />
                 <Button onClick={move} disabled={busy || project === group.project}>
@@ -218,7 +221,7 @@ function ToggleRow({ label, hint, checked, disabled, onChange }: {
   onChange: (on: boolean) => void
 }) {
   return (
-    <div className={clsx('flex items-center justify-between gap-3', disabled && 'opacity-50')}>
+    <div className={clsx('flex min-h-11 items-center justify-between gap-3', disabled && 'opacity-50')}>
       <div>
         <p className="text-fs13 font-medium">{label}</p>
         <p className="text-fs12 text-stone-500">{hint}</p>

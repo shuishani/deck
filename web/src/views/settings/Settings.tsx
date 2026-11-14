@@ -21,10 +21,10 @@ const tabs: { id: Tab; label: string }[] = [
 ]
 
 const subtitles: Record<Tab, string> = {
-  connections: 'deck 从哪些平台拉哪些会话、存多久',
-  reminders: '什么消息要我处理、什么时候推送到钉钉',
-  ai: '模型、用量与 AI 身份',
-  access: '从哪些地址、哪些设备打开 deck',
+  connections: '',
+  reminders: '',
+  ai: '',
+  access: '',
   log: LOG_SUBTITLE,
 }
 

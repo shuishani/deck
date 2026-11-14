@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { AlertTriangle, ChevronDown, ChevronRight, Plus, RefreshCw } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { api, type Source, type SourceHealth } from '../../api'
 import { ErrorBar } from '../../components/Feedback'
@@ -20,7 +20,7 @@ export function Connections({ source }: { source?: Source }) {
   const toast = useToast()
   const sources = useLoad(() => api.sources(), [versions.health, versions.config])
   const paused = new Set(sources.data?.sources.filter((s) => s.paused).map((s) => s.source))
-  // 点平台卡片上的「监测 N 个群」：列表按这个平台筛选并滚过去。
+  // 点平台卡片上的会话数：列表按这个平台筛选并滚过去。
   const [picked, setPicked] = useState<{ source?: Source; at: number }>({ source, at: 0 })
 
   function showChats(source: Source) {
@@ -41,13 +41,13 @@ export function Connections({ source }: { source?: Source }) {
   return (
     <div className="space-y-8">
       <section>
-      <SectionHeader title="平台" description="暂停监听后不再接收新消息，仍可发送；恢复后将补齐暂停期间的消息。" />
+      <SectionHeader title="平台" />
       {sources.error && (
         <div className="mb-3">
           <ErrorBar message={sources.error} onRetry={sources.reload} />
         </div>
       )}
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2">
         {Object.values(PLATFORMS).map((platform) => (
           <PlatformCard
             key={platform.source}
@@ -61,13 +61,6 @@ export function Connections({ source }: { source?: Source }) {
             onShowChats={() => showChats(platform.source)}
           />
         ))}
-        <div className="flex min-h-48 flex-col items-center justify-center rounded-xl border border-dashed border-stone-300 p-5 text-center text-stone-400 dark:border-stone-700">
-          <span className="flex size-9 items-center justify-center rounded-lg bg-stone-100 dark:bg-stone-800">
-            <Plus className="size-4" />
-          </span>
-          <p className="mt-2 font-medium text-stone-500">接入新平台</p>
-          <p className="mt-1 text-fs12">计划支持：飞书、GitHub、Plane</p>
-        </div>
       </div>
       </section>
       <GroupList key={picked.at} initialSource={picked.source} />
@@ -223,31 +216,39 @@ function PlatformCard({
           <button
             onClick={onShowChats}
             title="在下方会话列表里查看"
-            className="flex w-full items-center gap-2 text-left rounded-lg bg-stone-50 px-3 py-2 transition-colors hover:bg-stone-100 dark:bg-stone-800/50 dark:hover:bg-stone-800"
+            className="flex min-h-11 w-full items-center gap-2 text-left rounded-lg bg-stone-50 px-3 py-2 transition-colors hover:bg-stone-100 dark:bg-stone-800/50 dark:hover:bg-stone-800"
           >
             <span className="min-w-0 flex-1">
               <span className="block text-fs13 font-medium text-stone-800 dark:text-stone-100">
-                监测 {groups.length} 个会话
+                {groups.length} 个会话
                 {errors.length > 0 && <span className="text-red-600 dark:text-red-400"> · {errors.length} 个异常</span>}
               </span>
-              <span className="block truncate text-fs12 text-stone-500">{groups.map((g) => g.name).join('、')}</span>
             </span>
             <ChevronRight className="size-4 shrink-0 text-stone-400" />
           </button>
         ) : (
           <p className="rounded-lg bg-stone-50 px-3 py-2 text-fs12 text-stone-500 dark:bg-stone-800/50">暂无监测的会话，群可在项目中添加</p>
         )}
-        <dl className="space-y-1.5 border-t border-stone-100 pt-3 dark:border-stone-800">
+        <dl className="border-t border-stone-100 pt-3 dark:border-stone-800">
           <Fact label="接收方式">{receive}</Fact>
-          <Fact label="命令行工具">
-            <span className="font-mono text-fs12" title={health?.version || undefined}>
-              {cli} {health ? shortVersion(health.version) : '…'}
-            </span>
-          </Fact>
-          <Fact label="登录凭据">
-            <span title="读取本机状态，未联网验证">{health?.expires_at ? `${shortTime(health.expires_at)} 到期 · 自动续期` : `由 ${cli} 管理`}</span>
-          </Fact>
         </dl>
+        <details className="group text-fs12 text-stone-500 dark:text-stone-400">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between rounded-md focus-visible:outline-2 focus-visible:outline-accent-500 sm:min-h-8 [&::-webkit-details-marker]:hidden">
+            连接详情
+            <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
+          </summary>
+          <dl className="space-y-1.5 pt-1">
+            <Fact label="命令行工具">
+              <span className="font-mono text-fs12" title={health?.version || undefined}>
+                {cli} {health ? shortVersion(health.version) : '…'}
+              </span>
+            </Fact>
+            <Fact label="登录凭据">
+              {health?.expires_at ? `${shortTime(health.expires_at)} 到期 · 自动续期` : `由 ${cli} 管理`}
+            </Fact>
+          </dl>
+          <p className="mt-2">登录状态读取自本机，未联网验证。</p>
+        </details>
       </div>
 
       {groups.length > 0 && !paused && (
